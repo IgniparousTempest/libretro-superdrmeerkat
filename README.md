@@ -5,6 +5,8 @@ An arcade game for one to four players, inspired by Dr. Mario. Drop capsules to 
 ![Dr Meerkat and his secretary bird on the title screen](.readme/title.png)
 ![Four players racing to clear their bottles](.readme/four-player.png)
 
+[Cover art, boxes and logos for scrapers](https://github.com/IgniparousTempest/libretro-superdrmeerkat/tree/master/.artwork)
+
 ## Installation
 
 Download the [release archive](https://github.com/IgniparousTempest/libretro-superdrmeerkat/releases) for your system. Extract it and run `./super-dr-meerkat` (`super-dr-meerkat.exe` on Windows).

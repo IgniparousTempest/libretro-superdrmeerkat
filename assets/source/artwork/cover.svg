@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="2400" height="3600" viewBox="0 0 600 900">
+  <title>Super Dr Meerkat — a sunset in a medicine bottle</title>
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2=".38" y2="1">
+      <stop stop-color="#0d252e"/><stop offset=".52" stop-color="#194648"/>
+      <stop offset="1" stop-color="#367466"/>
+    </linearGradient>
+    <pattern id="screen" width="7" height="7" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.1" fill="#9ab197"/>
+    </pattern>
+    <path id="bottle" transform="rotate(-8 301 547)" d="M232 235h131v15h-10v47
+      q0 13 17 13h92q35 0 35 36v371q0 45-44 45H150q-45 0-45-45V346q0-36 35-36h87
+      q17 0 17-14v-46h-12z"/>
+    <clipPath id="glass"><use xlink:href="#bottle"/></clipPath>
+    <clipPath id="capsule"><rect x="1.5" y="-27.5" width="105" height="55"/></clipPath>
+    <image id="pieces" xlink:href="../pieces.svg" width="192" height="192"/>
+  </defs>
+
+  <path fill="url(#ink)" d="M0 0h600v900H0z"/>
+  <g fill="url(#screen)" opacity=".16">
+    <path d="M0 226q95-17 195-4-85 29-195 121zM600 317q-45 16-102 79l102-31z"/>
+    <path d="M0 636q72-42 117-110-71 40-117 44zM600 566q-60 74-133 112l133-45z"/>
+  </g>
+  <g fill="none" stroke="#72a293" stroke-width="1.3" opacity=".52" stroke-linecap="round">
+    <path d="m32 291 48-19m10-4 17-6m-74 44 30-13m458-40 29-11m-12 15 23-9"/>
+    <path d="m34 606 32-21m-28 29 14-9m477 11 38-18m-27 22 15-6"/>
+  </g>
+
+  <use xlink:href="#bottle" transform="translate(8 9)" fill="#0e2c33" stroke="#0e2c33"
+       stroke-width="16" stroke-linejoin="round"/>
+  <use xlink:href="#bottle" fill="#e3be80" stroke="#0e2c33" stroke-width="16" stroke-linejoin="round"/>
+  <g clip-path="url(#glass)">
+    <image xlink:href="../savanna.svg" x="-141" y="65" width="921" height="921"/>
+  </g>
+  <use xlink:href="#bottle" fill="none" stroke="#9bc6ab" stroke-width="7" stroke-linejoin="round"/>
+  <g transform="rotate(-8 301 547)" fill="none" stroke-linecap="round">
+    <path stroke="#fff0c2" stroke-width="3" d="M234 234h124m-250 151v-38q0-34 32-34h52m-84 89v41"/>
+    <path stroke="#668d7b" stroke-width="2.7" d="M490 468v119m0 14v15m-175-370h43"/>
+    <path stroke="#fff0c4" stroke-width="3.2" d="M117 350q0-26 26-26h27m-53 34v64"/>
+  </g>
+
+  <g transform="translate(83 349) rotate(-13)">
+    <svg width="59" height="59" viewBox="128 0 64 64"><use xlink:href="#pieces"/></svg>
+  </g>
+  <g transform="translate(496 318) rotate(13)">
+    <svg width="66" height="66" viewBox="64 0 64 64"><use xlink:href="#pieces"/></svg>
+  </g>
+  <g transform="translate(416 248) rotate(-24)">
+    <image xlink:href="../clinic-mark.svg" width="54" height="54" transform="rotate(38 27 27)"/>
+    <path fill="none" stroke="#9bc9b1" stroke-width="1.8" stroke-linecap="round" d="M-16 23h16m-8 6H2"/>
+  </g>
+
+  <path fill="#32665a" d="M0 761q120-29 262-20 190 8 338-61v220H0z"/>
+  <path fill="#214c48" d="M0 795q135-38 269-26 185 17 331-49v180H0z"/>
+  <path fill="#163d3e" d="M-12 853q144-65 294-53 149 11 332-47v161H-12z"/>
+  <path fill="url(#screen)" opacity=".18" d="M0 813q124-39 271-26 79 6 148-7-152 37-273 34-75 0-146 25z"/>
+  <path fill="none" stroke="#84a58c" stroke-width="2" opacity=".75"
+        d="M34 758q62-12 109-14m302 10q40-6 67-17m8-2 16-6"/>
+  <g fill="#112f31" opacity=".75">
+    <ellipse cx="248" cy="761" rx="124" ry="13"/><ellipse cx="459" cy="746" rx="68" ry="8"/>
+  </g>
+  <image xlink:href="../doctor.svg" x="40" y="289" width="390" height="488"/>
+  <image xlink:href="../secretary.svg" x="361" y="427" width="214" height="330"/>
+
+  <g transform="translate(60 690) rotate(12)">
+    <svg width="85" height="85" viewBox="0 0 64 64"><use xlink:href="#pieces"/></svg>
+  </g>
+  <g transform="translate(354 817) rotate(-13)">
+    <g clip-path="url(#capsule)">
+      <svg width="55" height="55" y="-27.5" viewBox="64 64 64 64"><use xlink:href="#pieces"/></svg>
+      <g transform="rotate(180 54 0)">
+        <svg width="55" height="55" y="-27.5" viewBox="128 64 64 64"><use xlink:href="#pieces"/></svg>
+      </g>
+    </g>
+    <path fill="none" stroke="#87ae97" stroke-width="1.7" stroke-linecap="round" d="M-32-2h23m-16 7h11"/>
+  </g>
+  <image xlink:href="../wordmark.svg" x="30" y="21" width="554" height="188"/>
+  <rect x="16" y="16" width="568" height="868" rx="3" fill="none" stroke="#e1c38b" stroke-width="2"/>
+</svg>

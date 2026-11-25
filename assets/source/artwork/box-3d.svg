@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1505" height="2827" viewBox="0 0 376.25 706.75">
+  <title>Super Dr Meerkat box, seen from the spine</title>
+  <defs>
+    <linearGradient id="lid" x1=".15" y1="0" x2=".45" y2="1">
+      <stop stop-color="#58776d"/><stop offset=".55" stop-color="#355a55"/>
+      <stop offset="1" stop-color="#264848"/>
+    </linearGradient>
+    <linearGradient id="fold">
+      <stop stop-color="#03171c" stop-opacity=".15"/><stop offset=".13" stop-color="#03171c" stop-opacity=".02"/>
+      <stop offset=".85" stop-color="#03171c" stop-opacity=".08"/><stop offset="1" stop-color="#03171c" stop-opacity=".32"/>
+    </linearGradient>
+  </defs>
+  <path fill="#132e32" stroke="#132e32" stroke-width="1.6" stroke-linejoin="round"
+        d="m5 50 316-48 50 28v621L55 699 5 671z"/>
+  <path fill="url(#lid)" d="m5 50 316-48 50 28L55 78z"/>
+  <g transform="matrix(50 28 0 621 5 50)">
+    <image xlink:href="../../../.artwork/box-spine.png" width="1" height="1" preserveAspectRatio="none"/>
+    <path fill="url(#fold)" d="M0 0h1v1H0z"/>
+  </g>
+  <image xlink:href="../../../.artwork/box-front.png" width="1" height="1" preserveAspectRatio="none"
+         transform="matrix(316 -48 0 621 55 78)"/>
+  <g fill="none" stroke-linejoin="round">
+    <path d="m6 50 49 27 315-47" stroke="#8ba99a" opacity=".65" stroke-width="1.5"/>
+    <path d="m9 50 312-47 44 25" stroke="#b5c0a7" opacity=".25" stroke-width=".9"/>
+    <path d="M55 79v619" stroke="#0a2229" stroke-width="2.2"/>
+    <path d="M56.6 80v617" stroke="#91ac97" opacity=".5" stroke-width="1"/>
+  </g>
+</svg>
