@@ -1,12 +1,12 @@
-use crate::app::{App, Command, Nav, Screen};
-use crate::config::MAX_PLAYERS;
-use crate::game::Action;
-use crate::scores::NameKey;
 use sdl2::{
     controller::{Axis, Button, GameController},
     keyboard::{KeyboardState, Scancode as Key},
     GameControllerSubsystem,
 };
+use super_dr_meerkat::app::{App, Command, Nav, Screen};
+use super_dr_meerkat::config::MAX_PLAYERS;
+use super_dr_meerkat::game::Action;
+use super_dr_meerkat::scores::NameKey;
 
 // Left, right, soft drop, counterclockwise, clockwise, hard drop.
 const KEYS: [[Key; 6]; MAX_PLAYERS] = [
@@ -118,57 +118,22 @@ pub fn key_press(app: &mut App, key: Key) {
 }
 
 pub(super) fn pad_press(app: &mut App, player: usize, button: Button) {
-    if app.press((button == Button::Back).then_some(player)) {
-        return;
-    }
-    if button == Button::Start {
-        app.command(Command::Start(player));
-        return;
-    }
-    if button == Button::RightShoulder {
-        app.navigate(Nav::Mute);
-        return;
-    }
-    if app.screen == Screen::Names {
-        let key = match button {
-            Button::DPadLeft => NameKey::Left,
-            Button::DPadRight => NameKey::Right,
-            Button::DPadUp => NameKey::Up,
-            Button::DPadDown => NameKey::Down,
-            Button::A | Button::Y => NameKey::Select,
-            Button::B => NameKey::Delete,
-            _ => return,
-        };
-        app.command(Command::Name(player, key));
-    } else if app.screen == Screen::Play {
-        let action = match button {
-            Button::DPadLeft => Action::Left,
-            Button::DPadRight => Action::Right,
-            Button::DPadDown | Button::X => Action::Down,
-            Button::A | Button::DPadUp => Action::Clockwise,
-            Button::B => Action::Counterclockwise,
-            Button::Y => Action::Drop,
-            _ => return,
-        };
-        app.play(player, action);
-    } else {
-        if matches!(app.screen, Screen::Pause | Screen::Result(_)) && !app.seats.contains(&player) {
-            return;
-        }
-        let nav = match button {
-            Button::DPadUp => Nav::Up,
-            Button::DPadDown => Nav::Down,
-            Button::A => Nav::Confirm,
-            Button::B => Nav::Back,
-            Button::X => Nav::Help,
-            Button::Y if app.screen == Screen::Title => {
-                app.command(Command::Scores);
-                return;
-            }
-            _ => return,
-        };
-        app.navigate(nav);
-    }
+    use super_dr_meerkat::pad;
+    let button = match button {
+        Button::Back => pad::Button::Coin,
+        Button::Start => pad::Button::Start,
+        Button::RightShoulder => pad::Button::Mute,
+        Button::DPadLeft => pad::Button::Left,
+        Button::DPadRight => pad::Button::Right,
+        Button::DPadUp => pad::Button::Up,
+        Button::DPadDown => pad::Button::Down,
+        Button::A => pad::Button::Red,
+        Button::B => pad::Button::Yellow,
+        Button::X => pad::Button::Green,
+        Button::Y => pad::Button::Blue,
+        _ => pad::Button::Other,
+    };
+    pad::press(app, player, button);
 }
 
 struct Pad {
@@ -219,7 +184,7 @@ impl Pads {
         if let Some(i) = self.seat(id) {
             self.slots[i] = None;
             if app.seats.contains(&i) {
-                app.command(crate::app::Command::Pause);
+                app.command(Command::Pause);
             }
             for idx in 0..self.system.num_joysticks().unwrap_or(0) {
                 self.add(idx);

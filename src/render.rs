@@ -321,6 +321,7 @@ impl Canvas {
 
 pub struct Renderer {
     gl: glow::Context,
+    context_valid: bool,
     program: glow::Program,
     vertex_array: Option<glow::VertexArray>,
     buffer: glow::Buffer,
@@ -372,7 +373,7 @@ void main() {
 }"#;
 
 impl Renderer {
-    // The caller owns a current SDL GL context for this renderer's lifetime.
+    // The caller makes its GL context current for rendering and cleanup.
     pub fn new(gl: glow::Context) -> Result<Self, String> {
         let mut png = png::Decoder::new(Cursor::new(include_bytes!("../assets/raster/atlas.png")))
             .read_info()
@@ -438,18 +439,11 @@ impl Renderer {
                 .ok_or("Missing shader resolution")?;
             gl.uniform_1_i32(gl.get_uniform_location(program, "atlas").as_ref(), 0);
             let vertex_array = if core_profile {
-                let array = gl.create_vertex_array()?;
-                gl.bind_vertex_array(Some(array));
-                Some(array)
+                Some(gl.create_vertex_array()?)
             } else {
                 None
             };
             let buffer = gl.create_buffer()?;
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buffer));
-            for (index, n, offset) in [(0, 2, 0), (1, 2, 8), (2, 4, 16)] {
-                gl.enable_vertex_attrib_array(index);
-                gl.vertex_attrib_pointer_f32(index, n, glow::FLOAT, false, 32, offset);
-            }
             let texture = gl.create_texture()?;
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
@@ -477,10 +471,9 @@ impl Renderer {
             if error != glow::NO_ERROR {
                 return Err(format!("OpenGL atlas setup failed (0x{error:04x})"));
             }
-            gl.enable(glow::BLEND);
-            gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             Ok(Self {
                 gl,
+                context_valid: true,
                 program,
                 vertex_array,
                 buffer,
@@ -490,8 +483,43 @@ impl Renderer {
             })
         }
     }
+
+    pub fn bind_framebuffer(&self, name: u32) {
+        let fbo = std::num::NonZeroU32::new(name).map(glow::NativeFramebuffer);
+        unsafe { self.gl.bind_framebuffer(glow::FRAMEBUFFER, fbo) };
+    }
+
+    /// A lost context already owns and discards its GL objects.
+    pub fn abandon(mut self) {
+        self.context_valid = false;
+    }
+
     pub fn present(&self, width: u32, height: u32) {
         unsafe {
+            let gl = &self.gl;
+            gl.use_program(Some(self.program));
+            if let Some(array) = self.vertex_array {
+                gl.bind_vertex_array(Some(array));
+            }
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.buffer));
+            for (index, n, offset) in [(0, 2, 0), (1, 2, 8), (2, 4, 16)] {
+                gl.enable_vertex_attrib_array(index);
+                gl.vertex_attrib_pointer_f32(index, n, glow::FLOAT, false, 32, offset);
+            }
+            gl.active_texture(glow::TEXTURE0);
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+            for cap in [
+                glow::DEPTH_TEST,
+                glow::STENCIL_TEST,
+                glow::CULL_FACE,
+                glow::SCISSOR_TEST,
+            ] {
+                gl.disable(cap);
+            }
+            gl.color_mask(true, true, true, true);
+            gl.enable(glow::BLEND);
+            gl.blend_equation(glow::FUNC_ADD);
+            gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             self.gl.viewport(0, 0, width as i32, height as i32);
             self.gl
                 .uniform_2_f32(Some(&self.resolution), self.canvas.w, self.canvas.h);
@@ -508,6 +536,9 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
+        if !self.context_valid {
+            return;
+        }
         unsafe {
             self.gl.delete_texture(self.texture);
             if let Some(array) = self.vertex_array {

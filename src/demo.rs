@@ -1,4 +1,4 @@
-use crate::game::{Action, Board, Kind, Phase, COLS, ROWS};
+use crate::game::{Action, Board, Kind, Phase, Sound, COLS, ROWS};
 use std::collections::VecDeque;
 
 pub struct Demo {
@@ -30,8 +30,8 @@ impl Demo {
         }
     }
 
-    pub fn tick(&mut self) {
-        self.board.tick();
+    pub fn tick(&mut self, sounds: &mut Vec<Sound>) {
+        sounds.extend(self.board.tick());
         let Phase::Falling(piece) = self.board.phase else {
             return;
         };
@@ -43,10 +43,10 @@ impl Demo {
             self.moves = plan(&self.board);
         }
         if self.moves.front() == Some(&Action::Drop) && self.board.landing(piece).y > piece.y + 3 {
-            self.board.action(Action::Down);
+            sounds.extend(self.board.action(Action::Down));
             self.delay = 3;
         } else if let Some(action) = self.moves.pop_front() {
-            self.board.action(action);
+            sounds.extend(self.board.action(action));
             self.delay = if action == Action::Drop { 12 } else { 5 };
         }
     }

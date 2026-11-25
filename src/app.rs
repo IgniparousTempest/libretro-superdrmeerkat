@@ -332,8 +332,13 @@ impl App {
 
     pub fn tick(&mut self, held: &[[bool; 3]; MAX_PLAYERS]) {
         if let Some(demo) = &mut self.demo {
-            demo.tick();
+            demo.tick(&mut self.sounds);
             if matches!(demo.board.phase, Phase::Out | Phase::Cleared) {
+                self.sounds.push(if demo.board.phase == Phase::Cleared {
+                    Sound::Win
+                } else {
+                    Sound::Lose
+                });
                 *demo = Demo::new(seed());
             }
             return;

@@ -2,6 +2,8 @@
 """Build a cabinet release and write its distributable archive to target/dist."""
 import argparse
 import json
+import os
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -12,6 +14,7 @@ from config_profile import CONFIG_NAME, host_platform, select_profile
 
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "super-dr-meerkat"
+CORE = "superdrmeerkat_libretro"
 ARMHF = "armv7-unknown-linux-gnueabihf"
 ARM64 = "aarch64-unknown-linux-gnu"
 PI_CPUS = {"pi2": "cortex-a7", "pi3": "cortex-a53", "pi4": "cortex-a72", "pi5": "cortex-a76"}
@@ -26,8 +29,13 @@ TARGETS = {
 }
 
 
-def release_files(binary, packages, platform):
+def release_files(binary, core, core_name, packages, platform):
     yield binary, binary.name
+    yield core, core_name
+    yield ROOT / "libretro" / f"{CORE}.info", f"{CORE}.info"
+    if platform.startswith("pi"):
+        for path in sorted((ROOT / "libretro/frontends").iterdir()):
+            yield path, f"frontends/{path.name}"
     yield select_profile(platform), CONFIG_NAME
     yield ROOT / "README.md", "README.md"
     yield ROOT / "LICENSE", "LICENSE"
@@ -52,6 +60,7 @@ def build_release(platform, sdl_sdk=None):
     windows = family == "windows"
     features = []
     flags = []
+    env = os.environ.copy()
     runtime_files = []
     if family in PI_CPUS:
         flags = ["-C", f"target-cpu={PI_CPUS[family]}"]
@@ -62,6 +71,11 @@ def build_release(platform, sdl_sdk=None):
             cpu_features.extend(["-aes", "-sha2"])
         if cpu_features:
             flags += ["-C", "target-feature=" + ",".join(cpu_features)]
+        # The standalone executable and the core share the game library.
+        env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
+            (env["CARGO_ENCODED_RUSTFLAGS"].split("\x1f") if env.get("CARGO_ENCODED_RUSTFLAGS")
+             else shlex.split(env.get("RUSTFLAGS", ""))) + flags)
+        flags = []
     elif windows:
         cpu = target.split("-")[0]
         sdl = sdl_sdk.resolve() / f"{cpu}-w64-mingw32"
@@ -79,10 +93,23 @@ def build_release(platform, sdl_sdk=None):
     target_dir = Path(metadata["target_directory"])
     build_dir = target_dir / "package-builds" / platform
     subprocess.run(["cargo", "rustc", "--release", "--locked", "--target", target, *features,
-                    "--target-dir", str(build_dir), "--bin", NAME, "--", *flags], cwd=ROOT, check=True)
+                    "--target-dir", str(build_dir), "--bin", NAME, "--", *flags], cwd=ROOT, env=env, check=True)
+
+    # Release Pi cores also run on older RetroPie images with an earlier glibc.
+    portable = platform.startswith("pi") and env.get("CORE_GLIBC")
+    core_target = f"{target}.{portable}" if portable else target
+    if portable:
+        # Let zigbuild supply its linker instead of SDL's Bookworm cross-linker.
+        env.pop(f"CARGO_TARGET_{target.upper().replace('-', '_')}_LINKER", None)
+    core_build_dir = build_dir / "core"
+    subprocess.run(["cargo", "zigbuild" if portable else "build", "--release", "--locked",
+                    "--target", core_target, "--target-dir", str(core_build_dir),
+                    "-p", "superdrmeerkat-libretro"], cwd=ROOT, env=env, check=True)
 
     executable = NAME + (".exe" if windows else "")
-    files = list(release_files(build_dir / target / "release" / executable, metadata["packages"], platform))
+    core_name = CORE + (".dll" if windows else ".dylib" if family == "macos" else ".so")
+    core = core_build_dir / target / "release" / (core_name if windows else "lib" + core_name)
+    files = list(release_files(build_dir / target / "release" / executable, core, core_name, metadata["packages"], platform))
     files.extend(runtime_files)
 
     dist = target_dir / "dist"

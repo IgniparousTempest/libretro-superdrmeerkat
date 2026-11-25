@@ -1,15 +1,31 @@
+[workspace]
+members = ["libretro"]
+resolver = "2"
+
+[workspace.package]
+version = "0.2.0"
+
 [package]
 name = "super-dr-meerkat"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.85"
 description = "A local multiplayer capsule puzzle arcade game"
+
+[[bin]]
+name = "super-dr-meerkat"
+path = "src/main.rs"
+required-features = ["standalone"]
+
+[features]
+default = ["standalone"]
+standalone = ["dep:sdl2"]
 
 [dependencies]
 bytemuck = "1"
 fs2 = "0.4"
 glow = "0.16"
 png = "0.17"
-sdl2 = "0.38"
+sdl2 = { version = "0.38", optional = true }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

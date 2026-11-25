@@ -1,14 +1,7 @@
-mod app;
 mod audio;
-mod config;
-mod demo;
-mod game;
 mod input;
-mod render;
-mod scores;
 #[cfg(test)]
 mod tests;
-mod ui;
 
 use app::{App, Command};
 use audio::Audio;
@@ -28,6 +21,7 @@ use std::{
     process::ExitCode,
     time::{Duration, Instant},
 };
+use super_dr_meerkat::{app, config, render, scores, ui};
 use ui::Ui;
 
 fn settings() -> Result<Option<Config>, String> {
@@ -145,12 +139,12 @@ fn run() -> Result<(), String> {
     let gl =
         unsafe { glow::Context::from_loader_function(|s| video.gl_get_proc_address(s).cast()) };
     let mut renderer = Renderer::new(gl)?;
-    let mut audio = Audio::new(&sdl)
+    let mut audio = Audio::new(&sdl, config.sound)
         .map_err(|e| eprintln!("Audio unavailable: {e}"))
         .ok();
     let mut app = App::new(&config, audio.is_some(), scores::HighScores::cabinet());
     let mut pads = Pads::new(sdl.game_controller()?, app.cap);
-    let mut ui = Ui::new();
+    let mut ui = Ui::default();
     let mut events = sdl.event_pump()?;
     let mut pointer = None;
     let start = Instant::now();
@@ -164,7 +158,6 @@ fn run() -> Result<(), String> {
         last = frame;
         let previous_screen = app.screen;
         app.clock(elapsed);
-        let was_sound = app.sound;
         for event in events.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -245,14 +238,7 @@ fn run() -> Result<(), String> {
             accumulator -= step;
         }
         if let Some(audio) = &mut audio {
-            if was_sound && !app.sound {
-                audio.silence();
-            }
-            if app.sound {
-                for sound in app.sounds.drain(..) {
-                    audio.play(sound);
-                }
-            }
+            audio.update(app.sound, &app.sounds);
         }
         app.sounds.clear();
         let (w, h) = window.drawable_size();

@@ -44,6 +44,7 @@ jobs:
       COMPILER: ${{ matrix.compiler }}
       TARGET: ${{ matrix.target }}
       EMULATOR: ${{ matrix.emulator }}
+      CORE_GLIBC: '2.17'
       # Bookworm's qemu-arm exposes ARMv8 instructions through the "max" model.
       QEMU_CPU: ${{ matrix.arch == 'armhf' && matrix.model != 2 && 'max' || matrix.cpu }}
       CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
@@ -54,13 +55,17 @@ jobs:
           dpkg --add-architecture "$ARCH"
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            git make python3 qemu-user "gcc-$COMPILER" "libc6-dev-$ARCH-cross" \
+            git make python3-venv qemu-user retroarch-dev "gcc-$COMPILER" "libc6-dev-$ARCH-cross" \
             "libsdl2-dev:$ARCH" "libegl-mesa0:$ARCH" "libgl1-mesa-dri:$ARCH"
           rustup target add "$TARGET"
+          python3 -m venv /opt/core-tools
+          /opt/core-tools/bin/pip install --only-binary=:all: cargo-zigbuild==0.20.1 ziglang==0.13.0
+          ln -s "$(/opt/core-tools/bin/python -c 'from pathlib import Path; import ziglang; print(Path(ziglang.__file__).with_name("zig"))')" /opt/core-tools/bin/zig
+          echo /opt/core-tools/bin >> "$GITHUB_PATH"
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Build and package
         run: make package
-      - name: Run the packaged game with OpenGL ES 2.0 under QEMU
+      - name: Run the standalone game and libretro core with OpenGL ES 2.0 under QEMU
         env:
           EGL_PLATFORM: surfaceless
           SDL_VIDEODRIVER: offscreen
@@ -74,11 +79,18 @@ jobs:
           cmp "$RUNNER_TEMP/expected-config.toml" "$RUNNER_TEMP/super-dr-meerkat/super-dr-meerkat.toml"
           cd "$RUNNER_TEMP/super-dr-meerkat"
           "$EMULATOR" -cpu "$QEMU_CPU" ./super-dr-meerkat --version
+          required_glibc=$(readelf -W --version-info superdrmeerkat_libretro.so |
+            sed -n 's/.*Name: GLIBC_\([0-9.]*\) .*/\1/p' | sort -V | tail -1)
+          test -n "$required_glibc"
+          dpkg --compare-versions "$required_glibc" le "$CORE_GLIBC"
           echo 'resolution = "640x360"' > smoke.toml
           # SDL converts SIGTERM into a quit event so a healthy run exits cleanly.
           timeout --preserve-status --kill-after=10s 15s "$EMULATOR" -cpu "$QEMU_CPU" \
             ./super-dr-meerkat --config smoke.toml > render.log 2>&1 || { cat render.log; exit 1; }
           grep 'OpenGL: .*OpenGL ES 2\.0' render.log
+          "$COMPILER-gcc" -std=c11 -Wall -Wextra -Werror "$GITHUB_WORKSPACE/libretro/tests/smoke.c" \
+            ./superdrmeerkat_libretro.so -lEGL -lGLESv2 -o core-smoke
+          "$EMULATOR" -cpu "$QEMU_CPU" ./core-smoke smoke.toml
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: super-dr-meerkat-${{ env.PLATFORM }}
@@ -116,13 +128,15 @@ jobs:
       - name: Test and launch the packaged executable on Apple Silicon
         run: |
           RUSTFLAGS="-L framework=$RUNNER_TEMP/sdl2 -C link-arg=-Wl,-rpath,$RUNNER_TEMP/sdl2" \
-            cargo test --locked --target aarch64-apple-darwin --features sdl2/use_mac_framework
+            cargo test --locked --workspace --target aarch64-apple-darwin --features sdl2/use_mac_framework
           hdiutil detach "$RUNNER_TEMP/sdl2"
           tar -xzf target/dist/super-dr-meerkat-macos-arm64.tar.gz -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP/super-dr-meerkat"
           lipo super-dr-meerkat -verify_arch arm64
           codesign --verify --strict ./super-dr-meerkat
           ./super-dr-meerkat --version
+          lipo superdrmeerkat_libretro.dylib -verify_arch arm64
+          python3 -c 'import ctypes; assert ctypes.CDLL("./superdrmeerkat_libretro.dylib").retro_api_version() == 1'
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: super-dr-meerkat-macos-arm64
@@ -162,7 +176,15 @@ jobs:
       - name: Launch the packaged executable on Windows
         run: |
           Expand-Archive "target/dist/super-dr-meerkat-$env:PLATFORM.zip" "$env:RUNNER_TEMP/game"
-          & "$env:RUNNER_TEMP/game/super-dr-meerkat/super-dr-meerkat.exe" --version
+          $env:PATH = "$env:RUNNER_TEMP/game/super-dr-meerkat;$env:PATH"
+          super-dr-meerkat.exe --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $shell = if ('${{ matrix.arch }}' -eq 'x86') { 'SysWOW64' } else { 'System32' }
+          @'
+          Add-Type 'using System.Runtime.InteropServices; public class Core { [DllImport("superdrmeerkat_libretro.dll", CallingConvention=CallingConvention.Cdecl)] public static extern uint retro_api_version(); }'
+          if ([Core]::retro_api_version() -ne 1) { exit 1 }
+          '@ | Set-Content "$env:RUNNER_TEMP/core-smoke.ps1"
+          & "$env:WINDIR/$shell/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP/core-smoke.ps1"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: super-dr-meerkat-${{ env.PLATFORM }}
@@ -170,9 +192,51 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  retroarch:
+    name: RetroArch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Start the core with and without a cabinet config
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends retroarch xvfb xauth libgl1-mesa-dri
+          cargo build --locked --release -p superdrmeerkat-libretro
+          core="$PWD/target/release/libsuperdrmeerkat_libretro.so"
+          cd "$RUNNER_TEMP"
+          mkdir bios
+          echo 'resolution = "640x360"' > bios/super-dr-meerkat.toml
+          echo 'resolution = "800x600"' > cabinet.toml
+          cat > retroarch.cfg <<EOF
+          video_driver = "gl"
+          video_fullscreen = "false"
+          video_scale = "1.0"
+          video_gpu_screenshot = "true"
+          audio_driver = "alsa"
+          audio_device = "null"
+          config_save_on_exit = "false"
+          system_directory = "$PWD/bios"
+          EOF
+          for size in 640x360 800x600; do
+            content=()
+            if [[ "$size" == 800x600 ]]; then content=("$PWD/cabinet.toml"); fi
+            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 retroarch -v -c "$PWD/retroarch.cfg" \
+              -L "$core" --max-frames 30 --max-frames-ss --max-frames-ss-path "$PWD/$size.png" \
+              "${content[@]}" > "$size.log" 2>&1 || { cat "$size.log"; exit 1; }
+            grep '^OpenGL:' "$size.log"
+            python3 - "$size" <<'PY'
+          import struct
+          import sys
+          from pathlib import Path
+          size = sys.argv[1]
+          width, height = struct.unpack(">II", Path(f"{size}.png").read_bytes()[16:24])
+          assert f"{width}x{height}" == size, (width, height)
+          PY
+          done
+
   release:
     name: Publish release
-    needs: [raspberry-pi, macos, windows]
+    needs: [raspberry-pi, macos, windows, retroarch]
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:

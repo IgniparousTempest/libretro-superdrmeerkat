@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<systemList>
+  <system uuid="8a033a19-07e1-4c75-ac25-b8d23b957cf7" name="super-dr-meerkat" fullname="Super Dr Meerkat">
+    <descriptor path="%ROOT%/super-dr-meerkat" extensions=".toml" theme="ports" port="1"
+      command="/usr/bin/retroarch --config /recalbox/share/system/configs/retroarch/retroarchcustom.cfg --appendconfig /recalbox/share/roms/super-dr-meerkat/frontends/video.cfg -L /recalbox/share/roms/super-dr-meerkat/superdrmeerkat_libretro.so %ROM%" />
+    <emulatorList>
+      <emulator name="libretro">
+        <core name="superdrmeerkat" priority="1" extensions=".toml" />
+      </emulator>
+    </emulatorList>
+  </system>
+</systemList>

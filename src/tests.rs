@@ -1,11 +1,4 @@
-use crate::{
-    app::{App, Command, Screen},
-    config::Config,
-    demo::Demo,
-    game::{Action, Kind, Outcome, Phase},
-    input::{key_press, pad_press},
-    scores::{HighScores, NameKey, NamePad, DELETE, DONE},
-};
+use crate::input::{key_press, pad_press};
 use sdl2::{controller::Button, keyboard::Scancode as Key};
 use std::{
     fs,
@@ -15,6 +8,13 @@ use std::{
         Barrier,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use super_dr_meerkat::{
+    app::{App, Command, Screen},
+    config::Config,
+    demo::Demo,
+    game::{Action, Kind, Outcome, Phase, Sound},
+    scores::{HighScores, NameKey, NamePad, DELETE, DONE},
 };
 
 const IDLE: [[bool; 3]; 4] = [[false; 3]; 4];
@@ -251,9 +251,12 @@ fn demo_starts_in_varied_played_positions_and_keeps_solving() {
         .flatten()
         .any(|b| matches!(b.kind, Kind::Pill(_))));
     assert_ne!(Demo::new(97).board.cells, start);
+    let mut sounds = Vec::new();
     for _ in 0..720 {
-        demo.tick();
+        demo.tick(&mut sounds);
     }
+    assert!(sounds.iter().any(|s| matches!(s, Sound::Land)));
+    assert!(sounds.iter().any(|s| matches!(s, Sound::Match(_))));
     assert_ne!(demo.board.cells, start);
     assert!(demo.board.score > score && demo.board.germs() < germs);
 }

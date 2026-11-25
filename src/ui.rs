@@ -32,14 +32,17 @@ pub struct Ui {
     screen: Screen,
 }
 
-impl Ui {
-    pub fn new() -> Self {
+impl Default for Ui {
+    fn default() -> Self {
         Self {
             hits: Vec::new(),
             pointer: None,
             screen: Screen::Title,
         }
     }
+}
+
+impl Ui {
     pub fn click(&self, screen: Screen, point: (f32, f32)) -> Option<Command> {
         if self.screen != screen {
             return None;
