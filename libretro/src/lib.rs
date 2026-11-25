@@ -245,7 +245,9 @@ fn request_graphics(env: Environment) -> Result<(), String> {
     let can_switch = unsafe { env(GET_PREFERRED_HW_RENDER, (&mut preferred as *mut u32).cast()) };
     let mut candidates = Vec::new();
     match preferred {
-        OPENGL | OPENGL_CORE | GLES2 | GLES3 => candidates.push(preferred),
+        // Older RetroArch releases report "gl" for both desktop GL and GLES builds.
+        OPENGL => candidates.extend([OPENGL, GLES2]),
+        OPENGL_CORE | GLES2 | GLES3 => candidates.push(preferred),
         GLES_VERSION => candidates.push(GLES3),
         _ => {}
     }

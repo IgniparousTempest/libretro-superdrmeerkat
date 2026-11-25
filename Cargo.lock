@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "super-dr-meerkat"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bytemuck",
  "fs2",
@@ -319,7 +319,7 @@ dependencies = [
 
 [[package]]
 name = "superdrmeerkat-libretro"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "glow",
  "super-dr-meerkat",

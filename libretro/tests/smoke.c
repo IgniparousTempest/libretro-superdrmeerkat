@@ -20,11 +20,12 @@ static bool environment(unsigned cmd, void *data) {
             no_game = *(const bool *)data;
             return true;
         case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
-            *(enum retro_hw_context_type *)data = RETRO_HW_CONTEXT_OPENGLES2;
+            /* RetroArch's Pi "gl" driver may expose only GLES without driver switching. */
+            *(enum retro_hw_context_type *)data = RETRO_HW_CONTEXT_OPENGL;
             return false;
         case RETRO_ENVIRONMENT_SET_HW_RENDER: {
             struct retro_hw_render_callback *request = data;
-            assert(request->context_type == RETRO_HW_CONTEXT_OPENGLES2);
+            if (request->context_type != RETRO_HW_CONTEXT_OPENGLES2) return false;
             request->get_current_framebuffer = framebuffer;
             request->get_proc_address = eglGetProcAddress;
             hw = *request;
