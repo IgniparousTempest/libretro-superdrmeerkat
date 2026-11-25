@@ -1,0 +1,9 @@
+# Number of enabled cabinet seats, each with its own credit balance (1 through 4).
+max_players = 4
+
+# Suggested resolutions include qHD (960x540), 720p (1280x720), 1080p (1920x1080), and QHD (2560x1440).
+resolution = "1280x720"
+
+# Start in fullscreen. F11 toggles fullscreen during play.
+fullscreen = false
+sound = true

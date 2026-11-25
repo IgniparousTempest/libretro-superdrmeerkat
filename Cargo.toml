@@ -1,0 +1,15 @@
+[package]
+name = "super-dr-meerkat"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "A local multiplayer capsule puzzle arcade game"
+
+[dependencies]
+bytemuck = "1"
+fs2 = "0.4"
+glow = "0.16"
+png = "0.17"
+sdl2 = "0.38"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

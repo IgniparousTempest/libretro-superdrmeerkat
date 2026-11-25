@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="890" height="302" viewBox="0 0 668 227">
+  <title>Super Dr Meerkat hand-lettered arcade marquee</title>
+  <defs>
+    <g id="meerkat" fill-rule="evenodd" stroke-linejoin="round">
+      <path d="M0 0h29l20 37L70 0h29v96H72V43L50 79h-3L26 44v52H0z"/>
+      <path d="M106 0h69v22h-41v15h34v21h-34v16h42v22h-70z"/>
+      <path d="M183 0h69v22h-41v15h34v21h-34v16h42v22h-70z"/>
+      <path d="M260 0h45q35 0 35 32 0 19-16 27l22 37h-32l-18-32h-8v32h-28zm28 22v22h12q12 0 12-12 0-10-12-10z"/>
+      <path d="M350 0h28v33l26-33h33l-35 43 38 53h-34l-25-36-3 4v32h-28z"/>
+      <path d="M465 0h36l33 96h-30l-5-17h-34l-5 17h-29zm7 58h20l-10-32z"/>
+      <path d="M521 0h81v24h-27v72h-28V24h-26z"/>
+    </g>
+    <g id="superdr" fill-rule="evenodd">
+      <path d="M0 25h10q0 4 5 4 4 0 4-3 0-2-8-4Q0 19 0 11 0 0 15 0q14 0 15 11H20q-1-4-5-4t-4 3q0 2 8 4 12 3 12 11 0 12-16 12Q1 37 0 25z"/>
+      <path d="M35 1h10v21q0 7 5 7t5-7V1h10v21q0 15-15 15T35 22z"/>
+      <path d="M71 1h16q14 0 14 12 0 13-14 13h-6v10H71zm10 8v9h5q5 0 5-5 0-4-5-4z"/>
+      <path d="M105 1h26v8h-16v5h14v8h-14v6h17v8h-27z"/>
+      <path d="M137 1h16q14 0 14 12 0 7-6 10l8 13h-12l-6-11h-4v11h-10zm10 8v8h5q5 0 5-4t-5-4z"/>
+      <path d="M183 1h15q17 0 17 17t-17 18h-15zm10 8v19h4q8 0 8-10 0-9-8-9z"/>
+      <path d="M220 1h16q14 0 14 12 0 7-6 10l8 13h-12l-6-11h-4v11h-10zm10 8v8h5q5 0 5-4t-5-4z"/>
+    </g>
+  </defs>
+  <g transform="translate(23 24) rotate(-3 305 90) skewX(-6)">
+    <path d="m4 19 298-7-12 51L0 70l11-25z" fill="#081e25" stroke="#081e25" stroke-width="8" stroke-linejoin="round"/>
+    <path d="m3 11 298-7-13 51L-1 62l12-26z" fill="#f58264" stroke="#182e32" stroke-width="4" stroke-linejoin="round"/>
+    <use xlink:href="#superdr" transform="translate(23 16) rotate(-1)" fill="#243a39"/>
+    <g transform="translate(13 76)">
+      <use xlink:href="#meerkat" transform="translate(7 12)" stroke="#091f25" stroke-width="10" fill="#091f25"/>
+      <use xlink:href="#meerkat" transform="translate(4 8)" stroke="#e48357" stroke-width="5" fill="#e48357"/>
+      <use xlink:href="#meerkat" stroke="#173238" stroke-width="6" fill="#ffe1a0"/>
+      <use xlink:href="#meerkat" fill="#ffe1a0"/>
+      <g fill="#fff2c8"><path d="m2 2 25 0 4 7H2zm106 0h65v5h-65zm77 0h65v5h-65zm77 0h37l-2 5h-35zm90 0h24v5h-24zm115 0h31l2 5h-35zm56 0h77v5h-77z"/></g>
+    </g>
+  </g>
+</svg>

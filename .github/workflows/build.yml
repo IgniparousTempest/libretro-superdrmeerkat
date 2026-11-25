@@ -1,0 +1,223 @@
+name: Build game
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  raspberry-pi:
+    name: Raspberry Pi ${{ matrix.model }} / ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    container: rust:1.92.0-slim-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [2, 3, 4, 5]
+        arch: [armhf, arm64]
+        exclude:
+          - model: 2
+            arch: arm64
+        include:
+          - arch: armhf
+            target: armv7-unknown-linux-gnueabihf
+            compiler: arm-linux-gnueabihf
+            emulator: qemu-arm
+          - arch: arm64
+            target: aarch64-unknown-linux-gnu
+            compiler: aarch64-linux-gnu
+            emulator: qemu-aarch64
+          - model: 2
+            cpu: cortex-a7
+          - model: 3
+            cpu: cortex-a53
+          - model: 4
+            cpu: cortex-a72
+          - model: 5
+            cpu: cortex-a76
+    env:
+      PLATFORM: pi${{ matrix.model }}-${{ matrix.arch }}
+      ARCH: ${{ matrix.arch }}
+      COMPILER: ${{ matrix.compiler }}
+      TARGET: ${{ matrix.target }}
+      EMULATOR: ${{ matrix.emulator }}
+      # Bookworm's qemu-arm exposes ARMv8 instructions through the "max" model.
+      QEMU_CPU: ${{ matrix.arch == 'armhf' && matrix.model != 2 && 'max' || matrix.cpu }}
+      CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+    steps:
+      - name: Install Bookworm build and runtime libraries
+        run: |
+          dpkg --add-architecture "$ARCH"
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git make python3 qemu-user "gcc-$COMPILER" "libc6-dev-$ARCH-cross" \
+            "libsdl2-dev:$ARCH" "libegl-mesa0:$ARCH" "libgl1-mesa-dri:$ARCH"
+          rustup target add "$TARGET"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build and package
+        run: make package
+      - name: Run the packaged game with OpenGL ES 2.0 under QEMU
+        env:
+          EGL_PLATFORM: surfaceless
+          SDL_VIDEODRIVER: offscreen
+          SDL_AUDIODRIVER: dummy
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: softpipe
+          MESA_GLES_VERSION_OVERRIDE: '2.0'
+        run: |
+          tar -xzf "target/dist/super-dr-meerkat-$PLATFORM.tar.gz" -C "$RUNNER_TEMP"
+          make config CONFIG_OUT="$RUNNER_TEMP/expected-config.toml"
+          cmp "$RUNNER_TEMP/expected-config.toml" "$RUNNER_TEMP/super-dr-meerkat/super-dr-meerkat.toml"
+          cd "$RUNNER_TEMP/super-dr-meerkat"
+          "$EMULATOR" -cpu "$QEMU_CPU" ./super-dr-meerkat --version
+          echo 'resolution = "640x360"' > smoke.toml
+          # SDL converts SIGTERM into a quit event so a healthy run exits cleanly.
+          timeout --preserve-status --kill-after=10s 15s "$EMULATOR" -cpu "$QEMU_CPU" \
+            ./super-dr-meerkat --config smoke.toml > render.log 2>&1 || { cat render.log; exit 1; }
+          grep 'OpenGL: .*OpenGL ES 2\.0' render.log
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: super-dr-meerkat-${{ env.PLATFORM }}
+          path: target/dist/super-dr-meerkat-${{ env.PLATFORM }}.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  macos:
+    name: macOS / Apple Silicon
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0-aarch64-apple-darwin
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install native Rust toolchain
+        run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+      - name: Download and verify the SDL2 framework
+        run: |
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 3 -o SDL2.dmg \
+            'https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.dmg'
+          echo '4a7ac31640d70214e848f994be8a12849c0f97918a7e6c2e27a40036166d1a7f  SDL2.dmg' | shasum -a 256 -c -
+          mkdir sdl2
+          hdiutil attach -readonly -nobrowse -mountpoint "$RUNNER_TEMP/sdl2" SDL2.dmg
+      - name: Build and package
+        id: package
+        shell: bash
+        run: |
+          make package PLATFORM=macos-arm64 SDL_SDK="$RUNNER_TEMP/sdl2"
+          version=$(cargo metadata --locked --offline --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "super-dr-meerkat").version')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test and launch the packaged executable on Apple Silicon
+        run: |
+          RUSTFLAGS="-L framework=$RUNNER_TEMP/sdl2 -C link-arg=-Wl,-rpath,$RUNNER_TEMP/sdl2" \
+            cargo test --locked --target aarch64-apple-darwin --features sdl2/use_mac_framework
+          hdiutil detach "$RUNNER_TEMP/sdl2"
+          tar -xzf target/dist/super-dr-meerkat-macos-arm64.tar.gz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/super-dr-meerkat"
+          lipo super-dr-meerkat -verify_arch arm64
+          codesign --verify --strict ./super-dr-meerkat
+          ./super-dr-meerkat --version
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: super-dr-meerkat-macos-arm64
+          path: target/dist/super-dr-meerkat-macos-arm64.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  windows:
+    name: Windows / ${{ matrix.arch }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            target: i686-pc-windows-gnu
+          - arch: x64
+            target: x86_64-pc-windows-gnu
+    env:
+      PLATFORM: windows-${{ matrix.arch }}
+      RUSTUP_TOOLCHAIN: 1.92.0-${{ matrix.target }}
+      RUSTFLAGS: -C link-self-contained=yes
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install matching Rust and MinGW tools
+        run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal --component rust-mingw --force-non-host
+      - name: Download and verify the SDL2 development kit
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'sdl2-mingw.tar.gz'
+          Invoke-WebRequest -Uri 'https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne '83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2') {
+            throw 'Unexpected SDL2 archive checksum'
+          }
+          tar -xzf $archive -C $env:RUNNER_TEMP
+      - name: Build and package
+        run: python tools/package_release.py $env:PLATFORM --sdl-sdk "$env:RUNNER_TEMP/SDL2-2.32.10"
+      - name: Launch the packaged executable on Windows
+        run: |
+          Expand-Archive "target/dist/super-dr-meerkat-$env:PLATFORM.zip" "$env:RUNNER_TEMP/game"
+          & "$env:RUNNER_TEMP/game/super-dr-meerkat/super-dr-meerkat.exe" --version
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: super-dr-meerkat-${{ env.PLATFORM }}
+          path: target/dist/super-dr-meerkat-${{ env.PLATFORM }}.zip
+          compression-level: 0
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [raspberry-pi, macos, windows]
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    concurrency:
+      group: release-${{ needs.macos.outputs.version }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.macos.outputs.version }}
+    steps:
+      - name: Publish the game archives for this version
+        shell: bash
+        run: |
+          existing=$(gh api graphql -F owner='{owner}' -F repo='{repo}' -f version="$VERSION" \
+            -f tag="refs/tags/$VERSION^{commit}" -f query='
+              query($owner: String!, $repo: String!, $version: String!, $tag: String!) {
+                repository(owner: $owner, name: $repo) {
+                  release(tagName: $version) { isDraft }
+                  object(expression: $tag) { oid }
+                }
+              }' --jq '.data.repository')
+          draft=$(jq -r '.release.isDraft' <<< "$existing")
+          if [[ "$draft" == false ]]; then
+            echo "Super Dr Meerkat $VERSION is already published."
+            exit 0
+          fi
+          tag_commit=$(jq -r '.object.oid // empty' <<< "$existing")
+          if [[ -n "$tag_commit" && "$tag_commit" != "$GITHUB_SHA" ]]; then
+            echo "Tag $VERSION points to $tag_commit, but the build used $GITHUB_SHA." >&2
+            exit 1
+          fi
+
+          gh run download "$GITHUB_RUN_ID" --pattern 'super-dr-meerkat-*' --dir dist
+          shopt -s nullglob
+          archives=(dist/*/*.tar.gz dist/*/*.zip)
+          if (( ${#archives[@]} != 10 )); then
+            echo "Expected 10 game archives, found ${#archives[@]}." >&2
+            exit 1
+          fi
+          if [[ "$draft" != true ]]; then
+            gh release create "$VERSION" --draft --target "$GITHUB_SHA" \
+              --title "Super Dr Meerkat $VERSION" --generate-notes
+          fi
+          gh release upload "$VERSION" "${archives[@]}" --clobber
+          gh release edit "$VERSION" --target "$GITHUB_SHA" --draft=false

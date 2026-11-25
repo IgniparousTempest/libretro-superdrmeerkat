@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72">
+  <title>The Burrow Clinic capsule</title>
+  <g transform="rotate(-38 36 36)" stroke="#142f34" stroke-width="3.5" stroke-linejoin="round">
+    <rect x="3" y="18" width="66" height="36" rx="18" fill="#f88569"/>
+    <path fill="#b4e1c4" d="M37 18h14a18 18 0 0 1 0 36H37z"/>
+    <path fill="none" stroke="#ffeac7" stroke-linecap="round" d="M10 34q2-9 10-10h10"/>
+  </g>
+  <path fill="#315650" d="M44 20h5v5h5v5h-5v5h-5v-5h-5v-5h5z"/>
+</svg>
