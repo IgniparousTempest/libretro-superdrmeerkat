@@ -1,9 +1,13 @@
 //! Bottle rules. Time advances in 60 Hz ticks, independently of the renderer.
+use std::time::Duration;
+
 pub const COLS: usize = 8;
 pub const ROWS: usize = 16;
+pub(crate) const CLEAR_BONUS: u32 = 1_000;
 const CELLS: usize = COLS * ROWS;
 const FLASH_TICKS: u8 = 18;
 const SETTLE_TICKS: u8 = 4;
+const BONUS_NOTICE_TICKS: u8 = 2 * 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Color {
@@ -168,6 +172,7 @@ pub struct Board {
     pub score: u32,
     pub level: u32,
     pub chain: u8,
+    pub(crate) bonus_notice_ticks: u8,
     rng: Rng,
     fall_ticks: u32,
 }
@@ -183,6 +188,7 @@ impl Board {
             score,
             level,
             chain: 0,
+            bonus_notice_ticks: 0,
             rng,
             fall_ticks: 0,
         };
@@ -406,6 +412,7 @@ impl Board {
     }
 
     pub fn tick(&mut self) -> Option<Sound> {
+        self.bonus_notice_ticks = self.bonus_notice_ticks.saturating_sub(1);
         match self.phase {
             Phase::Falling(_) => {
                 self.fall_ticks += 1;
@@ -431,53 +438,132 @@ impl Board {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    SoloClear,
     SoloLost,
     Winner(usize),
     Draw,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FinishCountdown {
+    pub leader: usize,
+    pub time_left: Duration,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RoundEvent {
+    CountdownStarted,
+    NextLevel,
+    Finished(Outcome),
+}
+
 pub struct Round {
     pub boards: Vec<Board>,
+    pub countdown: Option<FinishCountdown>,
+    bonus_awarded: bool,
 }
 
 impl Round {
     pub fn new(players: usize, seed: u64, level: u32, score: u32) -> Self {
         Self {
             boards: vec![Board::new(seed, level, score); players],
+            countdown: None,
+            bonus_awarded: false,
         }
     }
 
-    pub fn outcome(&self) -> Option<Outcome> {
-        if self.boards.len() == 1 {
-            return match self.boards[0].phase {
-                Phase::Cleared => Some(Outcome::SoloClear),
-                Phase::Out => Some(Outcome::SoloLost),
-                _ => None,
+    // Bank matches already made, even if the level ends while they are flashing.
+    fn finish_matches(&mut self) {
+        for board in &mut self.boards {
+            if matches!(board.phase, Phase::Flash(_)) {
+                board.clear_marked();
+            }
+        }
+    }
+
+    pub(crate) fn next_level(&mut self, seed: u64) {
+        self.finish_matches();
+        let level = self.boards[0].level.saturating_add(1);
+        let opening = Board::new(seed, level, 0);
+        for board in &mut self.boards {
+            *board = Board {
+                score: board.score,
+                bonus_notice_ticks: board.bonus_notice_ticks,
+                ..opening.clone()
             };
         }
-        let mut finished = self
-            .boards
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.phase == Phase::Cleared);
-        if let Some((first, _)) = finished.next() {
-            return Some(if finished.next().is_some() {
-                Outcome::Draw
-            } else {
-                Outcome::Winner(first)
-            });
+        self.countdown = None;
+        self.bonus_awarded = false;
+    }
+
+    pub(crate) fn elapse(&mut self, elapsed: Duration) -> Option<RoundEvent> {
+        let countdown = self.countdown.as_mut()?;
+        countdown.time_left = countdown.time_left.saturating_sub(elapsed);
+        if !countdown.time_left.is_zero() {
+            return None;
         }
+        self.finish_matches();
+        self.progress()
+    }
+
+    pub(crate) fn progress(&mut self) -> Option<RoundEvent> {
+        use RoundEvent::*;
+        let solo = self.boards.len() == 1;
         let mut alive = self
             .boards
             .iter()
             .enumerate()
             .filter(|(_, b)| b.phase != Phase::Out);
-        let first = alive.next();
-        match (first, alive.next()) {
-            (None, _) => Some(Outcome::Draw),
-            (Some((only, _)), None) => Some(Outcome::Winner(only)),
-            _ => None,
+        let Some((survivor, _)) = alive.next() else {
+            let outcome = if solo {
+                Outcome::SoloLost
+            } else {
+                Outcome::Draw
+            };
+            return Some(Finished(outcome));
+        };
+        let last_survivor = !solo && alive.next().is_none();
+        if last_survivor {
+            self.finish_matches();
+        }
+        let mut finished = self
+            .boards
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| (b.phase == Phase::Cleared).then_some(i));
+        let first = finished.next();
+        let multiple_clears = finished.next().is_some();
+        if first.is_some() && !self.bonus_awarded {
+            for board in self.boards.iter_mut().filter(|b| b.phase == Phase::Cleared) {
+                board.score = board.score.saturating_add(CLEAR_BONUS);
+                board.bonus_notice_ticks = BONUS_NOTICE_TICKS;
+            }
+            self.bonus_awarded = true;
+        }
+        if multiple_clears {
+            return Some(NextLevel);
+        }
+        if last_survivor {
+            self.countdown = None;
+            return Some(Finished(Outcome::Winner(survivor)));
+        }
+        let first = first?;
+        if solo {
+            return Some(NextLevel);
+        }
+        match self.countdown {
+            Some(timer) if timer.time_left.is_zero() => {
+                self.countdown = None;
+                Some(Finished(Outcome::Winner(timer.leader)))
+            }
+            Some(_) => None,
+            None => {
+                let reductions = self.boards[first].level.saturating_sub(1).min(5);
+                self.countdown = Some(FinishCountdown {
+                    leader: first,
+                    time_left: Duration::from_secs(u64::from(30 - 5 * reductions)),
+                });
+                Some(CountdownStarted)
+            }
         }
     }
 }
@@ -593,18 +679,79 @@ mod tests {
     }
 
     #[test]
-    fn race_handles_clears_last_survivor_and_simultaneous_finishes() {
+    fn last_survivor_wins_and_simultaneous_topouts_draw() {
         let mut r = Round::new(3, 10, 1, 0);
-        assert_eq!(r.outcome(), None);
+        assert_eq!(r.progress(), None);
         r.boards[1].phase = Phase::Out;
-        assert_eq!(r.outcome(), None);
+        assert_eq!(r.progress(), None);
         r.boards[0].phase = Phase::Out;
-        assert_eq!(r.outcome(), Some(Outcome::Winner(2)));
+        assert_eq!(r.progress(), Some(RoundEvent::Finished(Outcome::Winner(2))));
+        assert_eq!(r.boards[2].score, 0);
         r.boards[2].phase = Phase::Out;
-        assert_eq!(r.outcome(), Some(Outcome::Draw));
+        assert_eq!(r.progress(), Some(RoundEvent::Finished(Outcome::Draw)));
+    }
+
+    #[test]
+    fn first_finisher_wins_when_the_last_challenger_tops_out() {
+        let mut r = Round::new(3, 10, 1, 0);
+        r.boards[1].phase = Phase::Cleared;
+        assert_eq!(r.progress(), Some(RoundEvent::CountdownStarted));
+        assert_eq!(r.boards[1].score, CLEAR_BONUS);
+        r.boards[0].phase = Phase::Out;
+        assert_eq!(r.progress(), None);
+        r.boards[2].phase = Phase::Out;
+        assert_eq!(r.progress(), Some(RoundEvent::Finished(Outcome::Winner(1))));
+        assert!(r.countdown.is_none());
+        assert_eq!(r.boards[1].score, CLEAR_BONUS);
+    }
+
+    #[test]
+    fn last_survivor_banks_a_clear_already_flashing_when_the_opponent_tops_out() {
+        let mut r = Round::new(2, 10, 1, 0);
+        let b = &mut r.boards[1];
+        b.cells.fill(None);
+        for x in 0..4 {
+            put(b, x, 15, Gold, Kind::Germ);
+        }
+        b.check_runs();
+        assert!(matches!(b.phase, Phase::Flash(_)));
+        r.boards[0].phase = Phase::Out;
+        assert_eq!(r.progress(), Some(RoundEvent::Finished(Outcome::Winner(1))));
+        assert_eq!(r.boards[1].score, 400 + CLEAR_BONUS);
+        assert_eq!(r.boards[0].score, 0);
+    }
+
+    #[test]
+    fn clear_bonus_caps_at_the_score_limit_and_remains_visible_on_the_next_bottle() {
+        let mut r = Round::new(1, 10, 1, u32::MAX - 5);
         r.boards[0].phase = Phase::Cleared;
-        assert_eq!(r.outcome(), Some(Outcome::Winner(0)));
-        r.boards[2].phase = Phase::Cleared;
-        assert_eq!(r.outcome(), Some(Outcome::Draw));
+        assert_eq!(r.progress(), Some(RoundEvent::NextLevel));
+        r.next_level(12);
+        let board = &mut r.boards[0];
+        assert_eq!(board.score, u32::MAX);
+        assert_eq!(board.bonus_notice_ticks, BONUS_NOTICE_TICKS);
+        for _ in 0..BONUS_NOTICE_TICKS {
+            board.tick();
+        }
+        assert_eq!(board.bonus_notice_ticks, 0);
+        assert_eq!(board.score, u32::MAX);
+    }
+
+    #[test]
+    fn finish_countdown_loses_five_seconds_per_level_down_to_five() {
+        let mut r = Round::new(2, 10, 1, 0);
+        let mut expected_scores = [0, 0];
+        for (level, seconds) in [30, 25, 20, 15, 10, 5, 5].into_iter().enumerate() {
+            let first = level % 2;
+            r.boards[first].phase = Phase::Cleared;
+            assert_eq!(r.progress(), Some(RoundEvent::CountdownStarted));
+            assert_eq!(r.countdown.unwrap().time_left, Duration::from_secs(seconds));
+            r.boards[1 - first].phase = Phase::Cleared;
+            assert_eq!(r.progress(), Some(RoundEvent::NextLevel));
+            r.next_level(12);
+            assert!(r.countdown.is_none());
+            expected_scores[first] += CLEAR_BONUS;
+            assert_eq!([r.boards[0].score, r.boards[1].score], expected_scores);
+        }
     }
 }

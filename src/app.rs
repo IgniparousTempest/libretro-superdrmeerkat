@@ -1,7 +1,7 @@
 use crate::{
     config::{Config, MAX_PLAYERS},
     demo::Demo,
-    game::{Action, Outcome, Phase, Round, Sound},
+    game::{Action, Outcome, Phase, Round, RoundEvent, Sound},
     scores::{HighScores, NameKey, NamePad},
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,7 +33,6 @@ pub enum Command {
     Mute,
     Pause,
     Resume,
-    Next,
     Finish,
     Title,
     Quit,
@@ -110,7 +109,6 @@ impl App {
             Screen::Title | Screen::Guide | Screen::Scores => ATTRACT_PAGE_SECONDS,
             Screen::Demo => 12,
             Screen::Ready => 10,
-            Screen::Result(Outcome::SoloClear) => 6,
             Screen::Result(_) => 4,
             _ => 0,
         });
@@ -150,7 +148,7 @@ impl App {
                     self.ready_flash_left[seat] = READY_FLASH;
                     self.time_left = self.time_left.saturating_sub(Duration::from_secs(1));
                     if self.time_left.is_zero() {
-                        self.start_round(1, 0);
+                        self.start_round();
                     }
                 } else if self.credits[seat] > 0 {
                     self.credits[seat] -= 1;
@@ -176,10 +174,29 @@ impl App {
         self.ready_flash_left[seat].as_secs_f32() / READY_FLASH.as_secs_f32()
     }
 
-    fn start_round(&mut self, level: u32, score: u32) {
-        self.round = Some(Round::new(self.seats.len(), seed(), level, score));
+    fn start_round(&mut self) {
+        self.round = Some(Round::new(self.seats.len(), seed(), 1, 0));
         self.switch(Screen::Play);
         self.sounds.push(Sound::Start);
+    }
+
+    fn round_event(&mut self, event: RoundEvent) {
+        match event {
+            RoundEvent::CountdownStarted => self.sounds.push(Sound::Start),
+            RoundEvent::NextLevel => {
+                self.round.as_mut().unwrap().next_level(seed());
+                self.repeat.fill([0; 3]);
+                self.sounds.push(Sound::Win);
+            }
+            RoundEvent::Finished(outcome) => {
+                self.switch(Screen::Result(outcome));
+                self.sounds.push(if outcome == Outcome::SoloLost {
+                    Sound::Lose
+                } else {
+                    Sound::Win
+                });
+            }
+        }
     }
 
     fn finish_round(&mut self) {
@@ -217,7 +234,6 @@ impl App {
     pub fn options(&self) -> &'static [Command] {
         match self.screen {
             Screen::Pause => &[Command::Resume, Command::Title],
-            Screen::Result(Outcome::SoloClear) => &[Command::Next, Command::Finish],
             Screen::Result(_) => &[Command::Finish],
             _ => &[],
         }
@@ -232,10 +248,6 @@ impl App {
             Command::Start(s) if s < self.cap => self.start_button(s),
             Command::Name(s, key) if s < self.cap && self.screen == Screen::Names => {
                 self.name_key(s, key)
-            }
-            Command::Next if self.screen == Screen::Result(Outcome::SoloClear) => {
-                let b = &self.round.as_ref().unwrap().boards[0];
-                self.start_round(b.level.saturating_add(1), b.score);
             }
             Command::Finish if matches!(self.screen, Screen::Result(_)) => self.finish_round(),
             Command::Guide if self.screen == Screen::Title => self.switch(Screen::Guide),
@@ -299,6 +311,12 @@ impl App {
 
     // Cabinet deadlines use real elapsed time even if rendering skips simulation ticks.
     pub fn clock(&mut self, elapsed: Duration) {
+        if self.screen == Screen::Play {
+            if let Some(event) = self.round.as_mut().unwrap().elapse(elapsed) {
+                self.round_event(event);
+            }
+            return;
+        }
         if self.screen == Screen::Ready {
             for flash in &mut self.ready_flash_left {
                 *flash = flash.saturating_sub(elapsed);
@@ -322,8 +340,7 @@ impl App {
                 Screen::Guide => self.switch(Screen::Demo),
                 Screen::Demo => self.switch(Screen::Scores),
                 Screen::Scores => self.switch(Screen::Title),
-                Screen::Ready => self.start_round(1, 0),
-                Screen::Result(Outcome::SoloClear) => self.command(Command::Next),
+                Screen::Ready => self.start_round(),
                 Screen::Result(_) => self.finish_round(),
                 _ => {}
             }
@@ -371,13 +388,8 @@ impl App {
                 self.sounds.push(sound);
             }
         }
-        if let Some(outcome) = round.outcome() {
-            self.switch(Screen::Result(outcome));
-            self.sounds.push(if outcome == Outcome::SoloLost {
-                Sound::Lose
-            } else {
-                Sound::Win
-            });
+        if let Some(event) = round.progress() {
+            self.round_event(event);
         }
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     app::{App, Command, Screen},
-    game::{Block, Board, Color, Kind, Outcome, Phase, COLS, ROWS},
+    game::{Block, Board, Color, Kind, Outcome, Phase, CLEAR_BONUS, COLS, ROWS},
     render::{rect, rgb, Canvas, Ink, Rect, BODY, DISPLAY, WHITE},
     scores::{NameKey, NamePad, DELETE, DONE, KEY_COLUMNS, NAME_LENGTH},
 };
@@ -18,6 +18,7 @@ const BLUE: Ink = rgb(132, 200, 221);
 const SEATS: [Ink; 4] = [MINT, RED, BLUE, GOLD];
 const CARD_WIDTH: f32 = 146.0;
 const CARD_GAP: f32 = 10.0;
+const FOOTER_HEIGHT: f32 = 51.0;
 const PLAY_CONTROLS: [(&str, &str); 5] = [
     ("joystick", "Move"),
     ("button-a", "Turn right"),
@@ -64,9 +65,13 @@ impl Ui {
         self.screen = app.screen;
         background(c);
         let margin = ((c.w - 1490.0) * 0.5).max(if c.w < 850.0 { 24.0 } else { 44.0 });
-        let stacked_footer = c.w < 950.0 && matches!(app.screen, Screen::Play | Screen::Scores);
-        let footer_h = if stacked_footer { 83.0 } else { 51.0 };
-        let body = rect(margin, 83.0, c.w - 2.0 * margin, c.h - 90.0 - footer_h);
+        let footer = rect(
+            margin,
+            c.h - FOOTER_HEIGHT,
+            c.w - 2.0 * margin,
+            FOOTER_HEIGHT,
+        );
+        let body = rect(margin, 83.0, footer.w, footer.y - 90.0);
         match app.screen {
             Screen::Title | Screen::Ready => self.title(c, body, app, time),
             Screen::Guide => c.within(body.inset(8.0), 724.0, 520.0, guide),
@@ -103,12 +108,7 @@ impl Ui {
             });
         }
         header(c, margin);
-        self.footer(
-            c,
-            app,
-            rect(margin, c.h - footer_h, c.w - 2.0 * margin, footer_h),
-            stacked_footer,
-        );
+        self.footer(c, app, footer);
     }
 
     fn title(&mut self, c: &mut Canvas, area: Rect, app: &App, t: f32) {
@@ -250,15 +250,10 @@ impl Ui {
                 Some(format!("Final score  {:06}", boards[i].score)),
             ),
             Screen::Result(Outcome::Draw) => ("DRAW GAME".into(), None),
-            Screen::Result(result) => {
+            Screen::Result(Outcome::SoloLost) => {
                 let b = &boards[0];
                 (
-                    if result == Outcome::SoloClear {
-                        "BOTTLE CLEARED!"
-                    } else {
-                        "BOTTLE FULL"
-                    }
-                    .into(),
+                    "BOTTLE FULL".into(),
                     Some(format!("Level {:02}    /    Score {:06}", b.level, b.score)),
                 )
             }
@@ -276,8 +271,6 @@ impl Ui {
             let label = match command {
                 Command::Resume => "RESUME GAME",
                 Command::Title => "ABANDON GAME",
-                Command::Next => "NEXT LEVEL",
-                Command::Finish if app.screen == Screen::Result(Outcome::SoloClear) => "FINISH RUN",
                 Command::Finish => "CONTINUE",
                 _ => "",
             };
@@ -296,7 +289,6 @@ impl Ui {
                 rect(35.0, 260.0, 470.0, 34.0),
                 &[("joystick", "Choose an option"), ("button-a", "Confirm")],
                 NIGHT,
-                0.5,
             );
         }
     }
@@ -411,27 +403,16 @@ fn header(c: &mut Canvas, margin: f32) {
     c.fill(rect(margin, 75.0, c.w - 2.0 * margin, 1.0), LINE);
 }
 
-/// Fit the sprites and their captions as a unit. Adjacent uncaptioned buttons
-/// form the four-color "any button" prompt in attract mode.
-fn control_strip(c: &mut Canvas, area: Rect, items: &[(&str, &str)], ink: Ink, alignment: f32) {
+fn control_strip(c: &mut Canvas, area: Rect, items: &[(&str, &str)], ink: Ink) {
     const SIZE: f32 = 32.0;
     const FONT: f32 = 18.0;
-    let advance = |c: &Canvas, label: &str| {
-        if label.is_empty() {
-            SIZE + 2.0
-        } else {
-            SIZE + 5.0 + c.text_width(BODY, FONT, label) + 18.0
-        }
-    };
-    // Each strip ends with a caption, so omit its trailing inter-control gap.
+    let advance = |c: &Canvas, label: &str| SIZE + 5.0 + c.text_width(BODY, FONT, label) + 18.0;
     let width = items
         .iter()
         .map(|(_, label)| advance(c, label))
         .sum::<f32>()
         - 18.0;
-    let mut fitted = area.fit(width, SIZE);
-    fitted.x = area.x + (area.w - fitted.w) * alignment;
-    c.within(fitted, width, SIZE, |c| {
+    c.within(area, width, SIZE, |c| {
         let mut x = 0.0;
         for &(sprite, label) in items {
             c.art(sprite, rect(x, 0.0, SIZE, SIZE));
@@ -487,47 +468,14 @@ impl Ui {
         });
     }
 
-    fn footer(&mut self, c: &mut Canvas, app: &App, area: Rect, stacked: bool) {
+    fn footer(&mut self, c: &mut Canvas, app: &App, area: Rect) {
         c.fill(rect(0.0, area.y, c.w, area.h), DEEP);
         c.fill(rect(area.x, area.y, area.w, 1.0), LINE);
-        let mut row = rect(area.x, area.y + 9.0, area.w, 32.0);
-        if app.screen == Screen::Title {
-            let byline = "Courtney Pitcher - 2026";
-            c.right_text(BODY, 18.0, row.x + row.w, row.y + 22.0, byline, SOFT);
-            row.w -= c.text_width(BODY, 18.0, byline) + 16.0;
-        }
-        let hints: &[(&str, &str)] = match app.screen {
-            Screen::Play => &PLAY_CONTROLS,
-            Screen::Scores => &[
-                ("button-a", ""),
-                ("button-b", ""),
-                ("button-c", ""),
-                ("button-d", "Any button returns to title"),
-            ],
-            _ => &[],
-        };
-        if hints.is_empty() {
-            self.credits(c, row, app);
-        } else if stacked {
-            self.credits(c, row, app);
-            control_strip(
-                c,
-                rect(row.x, row.y + 34.0, row.w, row.h),
-                hints,
-                PAPER,
-                0.0,
-            );
-        } else {
-            let split = row.w * 0.36;
-            self.credits(c, rect(row.x, row.y, split, row.h), app);
-            control_strip(
-                c,
-                rect(row.x + split + 14.0, row.y, row.w - split - 14.0, row.h),
-                hints,
-                PAPER,
-                1.0,
-            );
-        }
+        let byline = "Courtney Pitcher. 2026";
+        let row_y = area.y + 9.0;
+        c.right_text(BODY, 18.0, area.x + area.w, row_y + 22.0, byline, SOFT);
+        let credits_w = area.w - c.text_width(BODY, 18.0, byline) - 16.0;
+        self.credits(c, rect(area.x, row_y, credits_w, 32.0), app);
     }
 }
 
@@ -599,7 +547,6 @@ fn guide(c: &mut Canvas) {
             ("button-start", "Join the round"),
         ],
         NIGHT,
-        0.5,
     );
 }
 
@@ -614,11 +561,11 @@ fn background(c: &mut Canvas) {
     let pitch = 48.0;
     let mut x = (c.w * 0.5) % pitch;
     while x < c.w {
-        c.fill(rect(x, 77.0, 0.8, c.h - 126.0), grid);
+        c.fill(rect(x, 77.0, 0.8, c.h - FOOTER_HEIGHT - 77.0), grid);
         x += pitch;
     }
     let mut y = 97.0;
-    while y < c.h - 51.0 {
+    while y < c.h - FOOTER_HEIGHT {
         c.fill(rect(0.0, y, c.w, 0.8), grid);
         y += pitch;
     }
@@ -704,13 +651,22 @@ fn lanes(area: Rect, count: usize) -> Vec<Rect> {
 }
 
 impl Ui {
-    fn play_screen(&mut self, c: &mut Canvas, body: Rect, app: &App, t: f32) {
+    fn play_screen(&mut self, c: &mut Canvas, mut body: Rect, app: &App, t: f32) {
+        if app.round.is_some() {
+            let controls = rect(body.x, body.y + body.h - 32.0, body.w, 32.0);
+            body.h -= controls.h + 6.0;
+            if app.screen == Screen::Play {
+                control_strip(c, controls, &PLAY_CONTROLS, PAPER);
+            }
+        }
         let boards = if let Some(demo) = &app.demo {
             std::slice::from_ref(&demo.board)
         } else {
             &app.round.as_ref().unwrap().boards[..]
         };
         let layout = lanes(body.inset(8.0), boards.len());
+        let countdown = app.round.as_ref().and_then(|round| round.countdown);
+        let mut level_on_bottle = boards.len() > 1;
         if boards.len() == 1 {
             let middle = layout[0];
             let left = rect(
@@ -737,12 +693,27 @@ impl Ui {
                 );
                 c.within(panel, 250.0, 304.0, |c| solo_stats(c, &boards[0]));
                 scene(c, right, t, false);
+            } else {
+                level_on_bottle = true;
             }
         }
         for (i, (r, b)) in layout.into_iter().zip(boards).enumerate() {
             let seat = app.seats.get(i).copied();
             c.within(r, LANE_W, LANE_H, |c| {
                 lane(c, b, seat, t);
+                if level_on_bottle {
+                    c.text(
+                        DISPLAY,
+                        15.0,
+                        20.0,
+                        56.0,
+                        &format!("LEVEL {:02}", b.level),
+                        SOFT,
+                    );
+                }
+                if let Some(timer) = countdown.filter(|timer| timer.leader == i) {
+                    finish_countdown(c, seconds_left(timer.time_left));
+                }
                 if let Some(s) = seat {
                     if let Some(pad) = &app.names[s] {
                         self.name_panel(c, s, pad, b.score);
@@ -828,6 +799,30 @@ impl Ui {
             );
         }
     }
+}
+
+fn finish_countdown(c: &mut Canvas, seconds: u64) {
+    let center = LANE_W * 0.5;
+    c.round(rect(25.0, 66.0, 200.0, 395.0), 12.0, WELL.alpha(235));
+    c.center_text(
+        DISPLAY,
+        100.0,
+        center,
+        239.0,
+        &seconds.to_string(),
+        if seconds <= 5 { RED } else { GOLD },
+    );
+    c.center_text(
+        DISPLAY,
+        21.5,
+        center,
+        281.0,
+        "All other players hurry!",
+        PAPER,
+    );
+    c.center_text(BODY, 21.0, center, 316.0, "If any one of you", PAPER);
+    c.center_text(BODY, 21.0, center, 341.0, "finishes now", PAPER);
+    c.center_text(BODY, 21.0, center, 366.0, "you are all safe.", PAPER);
 }
 
 fn solo_stats(c: &mut Canvas, b: &Board) {
@@ -968,7 +963,18 @@ fn lane(c: &mut Canvas, b: &Board, seat: Option<usize>, t: f32) {
         &format!("{:02}", b.germs()),
         accent,
     );
-    c.right_text(DISPLAY, 15.0, 229.0, 490.0, "SCORE", SOFT);
+    if b.bonus_notice_ticks > 0 {
+        c.right_text(
+            DISPLAY,
+            15.0,
+            229.0,
+            490.0,
+            &format!("CLEAR BONUS +{CLEAR_BONUS}"),
+            GOLD,
+        );
+    } else {
+        c.right_text(DISPLAY, 15.0, 229.0, 490.0, "SCORE", SOFT);
+    }
     c.right_text(
         DISPLAY,
         30.0,

@@ -13,7 +13,7 @@ use super_dr_meerkat::{
     app::{App, Command, Screen},
     config::Config,
     demo::Demo,
-    game::{Action, Kind, Outcome, Phase, Sound},
+    game::{Action, Block, Board, Color, FinishCountdown, Kind, Outcome, Phase, Sound, COLS},
     scores::{HighScores, NameKey, NamePad, DELETE, DONE},
 };
 
@@ -59,6 +59,19 @@ fn join(app: &mut App, seats: &[usize]) {
     }
     app.clock(Duration::from_secs(10));
     assert_eq!(app.screen, Screen::Play);
+}
+
+fn line_up_last_germs(board: &mut Board) {
+    let Phase::Falling(piece) = board.phase else {
+        panic!("expected a new capsule")
+    };
+    board.cells.fill(None);
+    for row in board.cells.chunks_exact_mut(COLS).rev().take(3) {
+        row[piece.x as usize] = Some(Block {
+            color: piece.colors[0],
+            kind: Kind::Germ,
+        });
+    }
 }
 
 #[test]
@@ -177,22 +190,38 @@ fn ready_bars_flash_independently_on_joins_and_repeated_start() {
 }
 
 #[test]
-fn solo_carries_score_and_seat_until_the_run_finishes() {
+fn solo_advances_on_each_clear_and_ranks_the_total_after_a_loss() {
     let dir = Cabinet::new();
     let mut app = dir.app(4);
     join(&mut app, &[3]);
+    app.command(Command::Coin(3));
+    for next_level in 2..=3 {
+        line_up_last_germs(&mut app.round.as_mut().unwrap().boards[0]);
+        app.play(3, Action::Drop);
+        for _ in 0..30 {
+            app.tick(&IDLE);
+        }
+        let b = &app.round.as_ref().unwrap().boards[0];
+        assert_eq!(app.screen, Screen::Play);
+        // Three germs, one capsule half, a 12-row hard drop and the clear bonus.
+        assert_eq!((b.level, b.score), (next_level, (next_level - 1) * 1_334));
+        assert!(b.germs() > 0 && matches!(b.phase, Phase::Falling(_)));
+        assert_eq!(app.seats, [3]);
+        assert_eq!(app.credits[3], 1);
+        assert!(app.names.iter().all(Option::is_none));
+        assert!(!dir.0.exists());
+    }
+
+    app.play(3, Action::Right);
     let b = &mut app.round.as_mut().unwrap().boards[0];
-    b.score = 870;
-    b.phase = Phase::Cleared;
+    b.cells.fill(None);
+    b.cells[3] = Some(Block {
+        color: Color::Red,
+        kind: Kind::Germ,
+    });
+    app.play(3, Action::Drop);
     app.tick(&IDLE);
-    assert_eq!(app.screen, Screen::Result(Outcome::SoloClear));
-    app.command(Command::Next);
-    let b = &app.round.as_ref().unwrap().boards[0];
-    assert_eq!((b.level, b.score), (2, 870));
-    assert_eq!(app.seats, [3]);
-    assert!(!dir.0.exists());
-    app.round.as_mut().unwrap().boards[0].phase = Phase::Out;
-    app.tick(&IDLE);
+    assert_eq!(app.screen, Screen::Result(Outcome::SoloLost));
     app.clock(Duration::from_secs(4));
     assert_eq!(app.screen, Screen::Names);
     app.command(Command::Start(0));
@@ -204,7 +233,158 @@ fn solo_carries_score_and_seat_until_the_run_finishes() {
         .scores()
         .entries()
         .iter()
-        .any(|e| e.name == "A" && e.score == 870));
+        .any(|e| e.name == "A" && e.score == 2_698));
+}
+
+#[test]
+fn a_second_clear_brings_back_every_seat_with_its_own_score() {
+    let dir = Cabinet::new();
+    let mut app = dir.app(4);
+    join(&mut app, &[0, 1, 2, 3]);
+    app.command(Command::Coin(3));
+    let boards = &mut app.round.as_mut().unwrap().boards;
+    for (i, b) in boards.iter_mut().enumerate() {
+        b.score = i as u32 * 1000;
+    }
+    boards[1].phase = Phase::Out;
+    line_up_last_germs(&mut boards[2]);
+    line_up_last_germs(&mut boards[0]);
+    line_up_last_germs(&mut boards[3]);
+    boards[3].cells[0] = Some(Block {
+        color: Color::Blue,
+        kind: Kind::Germ,
+    });
+    app.play(2, Action::Drop);
+    for _ in 0..30 {
+        app.tick(&IDLE);
+    }
+    let round = app.round.as_ref().unwrap();
+    let timer = round.countdown.unwrap();
+    assert_eq!(
+        (timer.leader, timer.time_left),
+        (2, Duration::from_secs(30))
+    );
+    assert_eq!(round.boards[2].score, 3_334);
+
+    app.clock(Duration::from_secs(29));
+    app.command(Command::Pause);
+    app.clock(Duration::from_secs(60));
+    app.command(Command::Resume);
+    assert_eq!(
+        app.round.as_ref().unwrap().countdown.unwrap().time_left,
+        Duration::from_secs(1)
+    );
+    app.play(2, Action::Drop);
+    app.play(0, Action::Drop);
+    for _ in 0..5 {
+        app.clock(Duration::from_millis(16));
+        app.tick(&IDLE);
+    }
+    // P4 has made a match and still has a germ left when P1 saves the group.
+    app.play(3, Action::Drop);
+    for _ in 0..20 {
+        app.clock(Duration::from_millis(16));
+        app.tick(&IDLE);
+    }
+    let round = app.round.as_ref().unwrap();
+    assert_eq!(app.screen, Screen::Play);
+    assert!(round.countdown.is_none());
+    assert_eq!(app.seats, [0, 1, 2, 3]);
+    assert_eq!(app.credits, [0, 0, 0, 1]);
+    let opening = &round.boards[0];
+    for (b, score) in round.boards.iter().zip([334, 1_000, 3_334, 3_334]) {
+        assert_eq!((b.level, b.score), (2, score));
+        assert!(matches!(b.phase, Phase::Falling(_)));
+        assert_eq!(
+            (b.cells, b.phase, b.next),
+            (opening.cells, opening.phase, opening.next)
+        );
+    }
+}
+
+#[test]
+fn simultaneous_first_finishers_each_earn_the_full_bonus() {
+    let dir = Cabinet::new();
+    for finishers in [&[1, 3][..], &[0, 2, 3], &[0, 1, 2, 3]] {
+        let mut app = dir.app(4);
+        join(&mut app, &[0, 1, 2, 3]);
+        for &seat in finishers {
+            line_up_last_germs(&mut app.round.as_mut().unwrap().boards[seat]);
+            app.play(seat, Action::Drop);
+        }
+        for _ in 0..30 {
+            app.tick(&IDLE);
+            assert!(app.round.as_ref().unwrap().countdown.is_none());
+        }
+        assert_eq!(app.screen, Screen::Play);
+        for (seat, b) in app.round.as_ref().unwrap().boards.iter().enumerate() {
+            let score = if finishers.contains(&seat) { 1_334 } else { 0 };
+            assert_eq!((b.level, b.score), (2, score));
+        }
+    }
+}
+
+#[test]
+fn players_tied_one_tick_behind_the_leader_rescue_everyone() {
+    let dir = Cabinet::new();
+    let mut app = dir.app(4);
+    join(&mut app, &[0, 2, 3]);
+    for board in &mut app.round.as_mut().unwrap().boards {
+        line_up_last_germs(board);
+    }
+    app.play(3, Action::Drop);
+    app.tick(&IDLE);
+    app.play(0, Action::Drop);
+    app.play(2, Action::Drop);
+    for _ in 0..30 {
+        app.tick(&IDLE);
+    }
+    assert_eq!(app.screen, Screen::Play);
+    for (board, score) in app
+        .round
+        .as_ref()
+        .unwrap()
+        .boards
+        .iter()
+        .zip([334, 334, 1_334])
+    {
+        assert_eq!((board.level, board.score), (2, score));
+    }
+}
+
+#[test]
+fn a_final_match_before_the_deadline_counts_while_it_is_still_flashing() {
+    let dir = Cabinet::new();
+    for germ_left_over in [false, true] {
+        let mut app = dir.app(2);
+        join(&mut app, &[0, 1]);
+        let boards = &mut app.round.as_mut().unwrap().boards;
+        boards[1].phase = Phase::Cleared;
+        line_up_last_germs(&mut boards[0]);
+        if germ_left_over {
+            boards[0].cells[0] = Some(Block {
+                color: Color::Blue,
+                kind: Kind::Germ,
+            });
+        }
+        app.tick(&IDLE);
+        app.clock(Duration::from_millis(29_999));
+        app.play(0, Action::Drop);
+        assert!(matches!(
+            app.round.as_ref().unwrap().boards[0].phase,
+            Phase::Flash(_)
+        ));
+        app.clock(Duration::from_millis(1));
+        let boards = &app.round.as_ref().unwrap().boards;
+        assert_eq!(boards[1].score, 1_000);
+        let b = &boards[0];
+        assert_eq!(b.score, 334);
+        if germ_left_over {
+            assert_eq!(app.screen, Screen::Result(Outcome::Winner(1)));
+        } else {
+            assert_eq!((app.screen, b.level), (Screen::Play, 2));
+        }
+    }
 }
 
 #[test]
@@ -308,6 +488,17 @@ fn racers_can_enter_and_save_names_independently_over_their_seats() {
     boards[2].score = 4000;
     boards[2].phase = Phase::Cleared;
     app.tick(&IDLE);
+    app.clock(Duration::from_millis(29_999));
+    app.tick(&IDLE);
+    assert_eq!(app.screen, Screen::Play);
+    assert_eq!(
+        app.round.as_ref().unwrap().countdown,
+        Some(FinishCountdown {
+            leader: 2,
+            time_left: Duration::from_millis(1),
+        })
+    );
+    app.clock(Duration::from_millis(1));
     assert_eq!(app.screen, Screen::Result(Outcome::Winner(2)));
     app.clock(Duration::from_secs(4));
     assert!(app.names[0].is_none() && app.names[2].is_none());
@@ -325,7 +516,7 @@ fn racers_can_enter_and_save_names_independently_over_their_seats() {
     let saved = dir.scores();
     assert_eq!(saved.entries().len(), 10);
     assert_eq!(saved.entries()[1].name, "H");
-    assert_eq!(saved.entries()[1].score, 4000);
+    assert_eq!(saved.entries()[1].score, 5_000);
     app.clock(Duration::from_secs(8));
     key_press(&mut app, Key::Num4);
     assert_eq!(app.screen, Screen::Title);
