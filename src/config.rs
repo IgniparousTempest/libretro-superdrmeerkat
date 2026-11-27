@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::path::{Path, PathBuf};
 
 pub const MAX_PLAYERS: usize = 4;
@@ -15,25 +15,30 @@ impl TryFrom<String> for Resolution {
     type Error = &'static str;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let (width, height) = value
-            .split_once(['x', 'X', '×'])
-            .ok_or("resolution must be WIDTHxHEIGHT, for example \"1920x1080\"")?;
-        // SDL2 accepts window dimensions of up to 16384 pixels.
-        let dimension = |part: &str| {
-            part.trim()
-                .parse::<u32>()
-                .ok()
-                .filter(|pixels| (1..=16_384).contains(pixels))
-                .ok_or("resolution width and height must each be integers from 1 to 16384")
-        };
-        Ok(Self {
-            width: dimension(width)?,
-            height: dimension(height)?,
-        })
+        let (width, height) = value.split_once(['x', 'X', '×']).ok_or(
+            "resolution must be \"use_native\" or WIDTHxHEIGHT, for example \"1920x1080\"",
+        )?;
+        let invalid = "resolution width and height must each be integers from 1 to 16384";
+        Self::new(
+            width.trim().parse().map_err(|_| invalid)?,
+            height.trim().parse().map_err(|_| invalid)?,
+        )
+        .ok_or(invalid)
     }
 }
 
 impl Resolution {
+    pub const FULL_HD: Self = Self {
+        width: 1920,
+        height: 1080,
+    };
+
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        // SDL2 accepts window dimensions of up to 16384 pixels.
+        ((1..=16_384).contains(&width) && (1..=16_384).contains(&height))
+            .then_some(Self { width, height })
+    }
+
     pub fn fit_within(self, width: u32, height: u32) -> (u32, u32) {
         let scale = (width as f64 / self.width as f64)
             .min(height as f64 / self.height as f64)
@@ -45,11 +50,22 @@ impl Resolution {
     }
 }
 
+fn optional_resolution<'de, D: Deserializer<'de>>(de: D) -> Result<Option<Resolution>, D::Error> {
+    let value = String::deserialize(de)?;
+    if value.trim() == "use_native" {
+        return Ok(None);
+    }
+    Resolution::try_from(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub max_players: usize,
-    pub resolution: Resolution,
+    #[serde(deserialize_with = "optional_resolution")]
+    pub resolution: Option<Resolution>,
     pub fullscreen: bool,
     pub sound: bool,
 }
@@ -58,10 +74,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             max_players: MAX_PLAYERS,
-            resolution: Resolution {
-                width: 1920,
-                height: 1080,
-            },
+            resolution: None,
             fullscreen: false,
             sound: true,
         }
@@ -111,18 +124,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_profile_and_older_configs_start_at_1080p() {
-        let expected = Resolution {
-            width: 1920,
-            height: 1080,
-        };
-        assert_eq!(Config::default().resolution, expected);
-        assert_eq!(
-            Config::parse("max_players = 2").unwrap().resolution,
-            expected
-        );
-        let profile = include_str!("../config/default.toml");
-        assert_eq!(Config::parse(profile).unwrap().resolution, expected);
+    fn native_resolution_is_the_default() {
+        assert_eq!(Config::default().resolution, None);
+        for source in [
+            include_str!("../config/default.toml"),
+            "resolution = \"use_native\"",
+            "max_players = 2",
+        ] {
+            assert_eq!(Config::parse(source).unwrap().resolution, None);
+        }
     }
 
     #[test]
@@ -130,10 +140,10 @@ mod tests {
         let profile = include_str!("../config/pi2-pi3.toml");
         assert_eq!(
             Config::parse(profile).unwrap().resolution,
-            Resolution {
+            Some(Resolution {
                 width: 1280,
                 height: 720,
-            }
+            })
         );
     }
 
@@ -142,11 +152,12 @@ mod tests {
         for (value, width, height) in [
             ("960x540", 960, 540),
             ("1280x720", 1280, 720),
+            ("1920x1080", 1920, 1080),
             ("2560X1440", 2560, 1440),
             (" 768 × 1024 ", 768, 1024),
         ] {
             let config = Config::parse(&format!("resolution = \"{value}\"")).unwrap();
-            assert_eq!(config.resolution, Resolution { width, height });
+            assert_eq!(config.resolution, Some(Resolution { width, height }));
         }
         for value in ["720p", "1280x", "0x720", "1280x-1", "16385x1080", "1x2x3"] {
             assert!(Config::parse(&format!("resolution = \"{value}\"")).is_err());
@@ -155,7 +166,7 @@ mod tests {
 
     #[test]
     fn window_fits_the_desktop_without_upscaling_or_stretching() {
-        let full_hd = Config::default().resolution;
+        let full_hd = Resolution::FULL_HD;
         assert_eq!(full_hd.fit_within(2560, 1440), (1920, 1080));
         assert_eq!(full_hd.fit_within(1024, 768), (1024, 576));
         assert_eq!(full_hd.fit_within(1920, 900), (1600, 900));

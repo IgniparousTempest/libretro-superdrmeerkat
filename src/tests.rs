@@ -162,6 +162,28 @@ fn every_enabled_seat_can_join_and_abandoning_requires_a_new_credit() {
 }
 
 #[test]
+fn disabling_a_port_preserves_its_paid_seat_and_credits() {
+    let dir = Cabinet::new();
+    let mut app = dir.app(4);
+    app.set_enabled_seats([false, true, false, true]);
+    assert_eq!(app.enabled_seats().collect::<Vec<_>>(), [1, 3]);
+    app.command(Command::Coin(0));
+    app.command(Command::Coin(3));
+    join(&mut app, &[1, 3]);
+
+    app.set_enabled_seats([false, true, false, false]);
+    app.command(Command::Coin(3));
+    app.command(Command::Start(3));
+    assert_eq!(app.screen, Screen::Pause);
+    assert_eq!(app.seats, [1, 3]);
+    assert_eq!(app.credits, [0, 0, 0, 1]);
+    app.set_enabled_seats([false, true, false, true]);
+    app.command(Command::Start(3));
+    assert_eq!(app.screen, Screen::Play);
+    assert_eq!(app.round.as_ref().unwrap().boards.len(), 2);
+}
+
+#[test]
 fn ready_bars_flash_independently_on_joins_and_repeated_start() {
     let dir = Cabinet::new();
     let mut app = dir.app(3);

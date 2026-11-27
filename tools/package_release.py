@@ -34,6 +34,8 @@ def release_files(binary, core, core_name, packages, platform):
     yield core, core_name
     yield ROOT / "libretro" / f"{CORE}.info", f"{CORE}.info"
     if platform.startswith("pi"):
+        module = Path("scriptmodules/libretrocores/lr-superdrmeerkat.sh")
+        yield ROOT / module, module.as_posix()
         for path in sorted((ROOT / "libretro/frontends").iterdir()):
             yield path, f"frontends/{path.name}"
     yield select_profile(platform), CONFIG_NAME

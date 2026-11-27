@@ -1,6 +1,6 @@
 use crate::ffi::{
     ControllerDescription, ControllerInfo, Environment, Input, InputDescriptor,
-    SET_CONTROLLER_INFO, SET_INPUT_DESCRIPTORS,
+    GET_INPUT_MAX_USERS, SET_CONTROLLER_INFO, SET_INPUT_DESCRIPTORS,
 };
 use std::ffi::CStr;
 use super_dr_meerkat::{
@@ -11,6 +11,11 @@ use super_dr_meerkat::{
 
 pub const JOYPAD: u32 = 1;
 pub const ANALOG: u32 = 5;
+// RetroArch retains this list of device types after SET_CONTROLLER_INFO returns.
+const RETROPAD: &ControllerDescription = &ControllerDescription {
+    description: c"RetroPad".as_ptr(),
+    id: JOYPAD,
+};
 const BUTTONS: [(Button, &CStr); 16] = [
     (Button::Red, c"Red - Turn right / Confirm"),
     (Button::Green, c"Green - Soft drop / How to play"),
@@ -30,25 +35,18 @@ const BUTTONS: [(Button, &CStr); 16] = [
     (Button::Other, c""),
 ];
 
-pub fn describe(env: Environment, ports: usize) {
-    let pad = ControllerDescription {
-        description: c"RetroPad".as_ptr(),
-        id: JOYPAD,
-    };
-    let mut controllers = vec![
-        ControllerInfo {
-            types: &pad,
-            num_types: 1
-        };
-        ports
-    ];
-    controllers.push(ControllerInfo {
+pub fn describe(env: Environment) {
+    let mut controllers = [ControllerInfo {
+        types: RETROPAD,
+        num_types: 1,
+    }; MAX_PLAYERS + 1];
+    controllers[MAX_PLAYERS] = ControllerInfo {
         types: std::ptr::null(),
         num_types: 0,
-    });
+    };
     unsafe { env(SET_CONTROLLER_INFO, controllers.as_mut_ptr().cast()) };
     let mut entries = Vec::new();
-    for port in 0..ports {
+    for port in 0..MAX_PLAYERS {
         for (id, &(_, text)) in BUTTONS.iter().enumerate().filter(|(_, b)| !b.1.is_empty()) {
             entries.push(InputDescriptor {
                 port: port as u32,
@@ -67,6 +65,28 @@ pub fn describe(env: Environment, ports: usize) {
         description: std::ptr::null(),
     });
     unsafe { env(SET_INPUT_DESCRIPTORS, entries.as_mut_ptr().cast()) };
+}
+
+pub fn enabled_ports(
+    env: Option<Environment>,
+    devices: &[Option<bool>; MAX_PLAYERS],
+) -> [bool; MAX_PLAYERS] {
+    let mut users = 0u32;
+    let limit = if env
+        .is_some_and(|env| unsafe { env(GET_INPUT_MAX_USERS, (&mut users as *mut u32).cast()) })
+    {
+        MAX_PLAYERS.min(users as usize)
+    } else {
+        MAX_PLAYERS
+    };
+    // Two frontend users can map to P2 and P4. Assume a RetroPad only when no device was specified.
+    let assigned = (0..MAX_PLAYERS).filter(|&port| devices[port] == Some(true));
+    let defaults = (0..limit).filter(|&port| devices[port].is_none());
+    let mut enabled = [false; MAX_PLAYERS];
+    for port in assigned.chain(defaults).take(limit) {
+        enabled[port] = true;
+    }
+    enabled
 }
 
 pub fn read(input: Input, port: u32) -> u16 {

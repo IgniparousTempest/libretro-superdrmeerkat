@@ -15,10 +15,8 @@ Set `max_players` and `resolution` in `super-dr-meerkat.toml`.
 
 ## RetroArch
 
-Copy `superdrmeerkat_libretro` (`.so`, `.dll` or `.dylib`) to RetroArch’s cores directory and its `.info` file to the core info directory. With an OpenGL video driver, choose **Load Core → Super Dr Meerkat → Start Core**, or load `super-dr-meerkat.toml` as content to use your cabinet settings. **Select** inserts a credit and **Start** joins on each controller. High scores go in RetroArch’s save directory.
-
-- **RetroPie** — Extract the matching Pi archive into `~/RetroPie/roms/ports/`. From `ports/`, run `mv super-dr-meerkat/frontends/retropie.sh 'Super Dr Meerkat.sh'`. Restart EmulationStation and open **Ports**.
-- **Recalbox** — Extract the matching Pi archive into `/recalbox/share/roms/`. Copy `super-dr-meerkat/frontends/recalbox-systemlist.xml` to `/recalbox/share/system/.emulationstation/systemlist.xml`. If that file exists, add just the `<system>` element to its `<systemList>`. Restart EmulationStation and open **Ports**.
+* max players set via ReroArch's Maximum users and enabled RetroPad ports.
+* Resolution set via **Quick Menu → Core Options → Internal Resolution**.
 
 ## Building from source
 

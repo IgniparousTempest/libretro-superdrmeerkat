@@ -1,5 +1,6 @@
 mod ffi;
 mod input;
+mod video;
 
 use ffi::*;
 use std::{
@@ -10,7 +11,7 @@ use std::{
     time::Duration,
 };
 use super_dr_meerkat::{
-    app::{App, Command},
+    app::App,
     config::{Config, Resolution, MAX_PLAYERS},
     mixer::Mixer,
     render::Renderer,
@@ -23,7 +24,7 @@ const FPS: usize = 60;
 const AUDIO_FRAMES: usize = SAMPLE_RATE / FPS;
 
 struct Game {
-    config: Config,
+    geometry: Geometry,
     save_dir: Option<PathBuf>,
     app: App,
     ui: Ui,
@@ -33,14 +34,15 @@ struct Game {
 }
 
 impl Game {
-    fn new(config: Config, save_dir: Option<PathBuf>) -> Self {
+    fn new(geometry: Geometry, save_dir: Option<PathBuf>) -> Self {
         let scores = save_dir.as_ref().map_or_else(HighScores::cabinet, |dir| {
             HighScores::open(dir.join("super-dr-meerkat/high-scores.toml"))
         });
+        let app = App::new(&Config::default(), true, scores);
         Self {
-            app: App::new(&config, true, scores),
-            mixer: Mixer::new(SAMPLE_RATE as i32, config.sound),
-            config,
+            mixer: Mixer::new(SAMPLE_RATE as i32, app.sound),
+            app,
+            geometry,
             save_dir,
             ui: Ui::default(),
             previous: [0; MAX_PLAYERS],
@@ -82,7 +84,8 @@ struct Core {
     game: Option<Game>,
     renderer: Option<Renderer>,
     graphics_failed: bool,
-    disconnected: [bool; MAX_PLAYERS],
+    context_was_reset: bool,
+    port_devices: [Option<bool>; MAX_PLAYERS],
 }
 
 static CORE: LazyLock<Mutex<Core>> = LazyLock::new(|| Mutex::new(Core::default()));
@@ -101,6 +104,7 @@ pub extern "C" fn retro_set_environment(env: Option<Environment>) {
     core().callbacks.env = env;
     if let Some(env) = env {
         unsafe { env(SET_SUPPORT_NO_GAME, (&mut true as *mut bool).cast()) };
+        video::register_option(env);
     }
 }
 
@@ -128,14 +132,12 @@ pub extern "C" fn retro_set_input_state(cb: Option<Input>) {
 #[no_mangle]
 pub extern "C" fn retro_set_controller_port_device(port: u32, device: u32) {
     let mut state = core();
-    if let Some(disconnected) = state.disconnected.get_mut(port as usize) {
-        *disconnected = !matches!(device & 0xff, input::JOYPAD | input::ANALOG);
-        if *disconnected {
+    if let Some(slot) = state.port_devices.get_mut(port as usize) {
+        let enabled = matches!(device & 0xff, input::JOYPAD | input::ANALOG);
+        *slot = Some(enabled);
+        if !enabled {
             if let Some(game) = &mut state.game {
                 game.previous[port as usize] = 0;
-                if game.app.seats.contains(&(port as usize)) {
-                    game.app.command(Command::Pause);
-                }
             }
         }
     }
@@ -149,8 +151,8 @@ pub unsafe extern "C" fn retro_get_system_info(info: *mut SystemInfo) {
         info.write(SystemInfo {
             library_name: c"Super Dr Meerkat".as_ptr(),
             library_version: concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast(),
-            valid_extensions: c"toml".as_ptr(),
-            need_fullpath: true,
+            valid_extensions: c"".as_ptr(),
+            need_fullpath: false,
             block_extract: false,
         });
     }
@@ -163,23 +165,11 @@ pub unsafe extern "C" fn retro_get_system_av_info(info: *mut AvInfo) {
     if info.is_null() {
         return;
     }
-    let Resolution { width, height } = core()
+    let geometry = core()
         .game
         .as_ref()
-        .map_or_else(|| Config::default().resolution, |g| g.config.resolution);
-    info.write(AvInfo {
-        geometry: Geometry {
-            base_width: width,
-            base_height: height,
-            max_width: width,
-            max_height: height,
-            aspect_ratio: width as f32 / height as f32,
-        },
-        timing: Timing {
-            fps: FPS as f64,
-            sample_rate: SAMPLE_RATE as f64,
-        },
-    });
+        .map_or_else(|| Geometry::new(Resolution::FULL_HD), |g| g.geometry);
+    info.write(geometry.av_info());
 }
 
 fn path_from_c(path: *const c_char) -> Option<PathBuf> {
@@ -199,9 +189,9 @@ fn path_from_c(path: *const c_char) -> Option<PathBuf> {
     path.to_str().ok().map(PathBuf::from)
 }
 
-fn directory(env: Environment, command: u32) -> Option<PathBuf> {
+fn save_directory(env: Environment) -> Option<PathBuf> {
     let mut path: *const c_char = ptr::null();
-    if unsafe { env(command, (&mut path as *mut *const c_char).cast()) } {
+    if unsafe { env(GET_SAVE_DIRECTORY, (&mut path as *mut *const c_char).cast()) } {
         path_from_c(path)
     } else {
         None
@@ -235,7 +225,10 @@ extern "C" fn context_reset() {
     let mut state = core();
     state.graphics_failed = renderer.is_err();
     match renderer {
-        Ok(renderer) => state.renderer = Some(renderer),
+        Ok(renderer) => {
+            state.renderer = Some(renderer);
+            state.context_was_reset = true;
+        }
         Err(e) => eprintln!("Super Dr Meerkat: {e}"),
     }
 }
@@ -290,35 +283,24 @@ fn request_graphics(env: Environment) -> Result<(), String> {
     Err("The core requires OpenGL or OpenGL ES. Select the gl or glcore video driver.".into())
 }
 
-fn load(info: Option<&GameInfo>) -> Result<(), String> {
+fn load() -> Result<(), String> {
     let env = core()
         .callbacks
         .env
         .ok_or("missing libretro environment callback")?;
-    let config_path = match info {
-        Some(info) => Some(path_from_c(info.path).ok_or("missing cabinet config path")?),
-        None => directory(env, GET_SYSTEM_DIRECTORY)
-            .map(|p| p.join("super-dr-meerkat.toml"))
-            .filter(|p| !matches!(p.try_exists(), Ok(false))),
-    };
-    let config = match config_path {
-        Some(path) => Config::load(Some(path))?,
-        None => Config::default(),
-    };
-    let save_dir = directory(env, GET_SAVE_DIRECTORY);
-    input::describe(env, config.max_players);
+    let save_dir = save_directory(env);
+    input::describe(env);
     let mut xrgb8888 = 1u32;
     unsafe { env(SET_PIXEL_FORMAT, (&mut xrgb8888 as *mut u32).cast()) };
     request_graphics(env)?;
-    core().game = Some(Game::new(config, save_dir));
+    let geometry = Geometry::new(video::resolution(env));
+    core().game = Some(Game::new(geometry, save_dir));
     Ok(())
 }
 
-/// # Safety
-/// A non-null `info` and its NUL-terminated path must be readable for this call.
 #[no_mangle]
-pub unsafe extern "C" fn retro_load_game(info: *const GameInfo) -> bool {
-    match load(info.as_ref()) {
+pub extern "C" fn retro_load_game(_info: *const GameInfo) -> bool {
+    match load() {
         Ok(()) => true,
         Err(error) => {
             eprintln!("Super Dr Meerkat: {error}");
@@ -335,7 +317,7 @@ pub extern "C" fn retro_reset() {
     let mut state = core();
     if let Some(mut game) = state.game.take() {
         game.app.scores.flush();
-        state.game = Some(Game::new(game.config, game.save_dir));
+        state.game = Some(Game::new(game.geometry, game.save_dir));
     }
 }
 
@@ -358,23 +340,32 @@ pub extern "C" fn retro_deinit() {
 
 #[no_mangle]
 pub extern "C" fn retro_run() {
-    let (cb, disconnected, cap) = {
-        let state = core();
+    let (env, geometry, context_reset) = {
+        let mut state = core();
+        let reset = std::mem::take(&mut state.context_was_reset);
         let Some(game) = &state.game else {
             return;
         };
-        (state.callbacks, state.disconnected, game.app.cap)
+        (state.callbacks.env, game.geometry, reset)
     };
+    // Resizing can call context_destroy and context_reset before the frontend returns.
+    let geometry = env
+        .and_then(|env| geometry.update(env, context_reset))
+        .unwrap_or(geometry);
+    let cb = core().callbacks;
     if let Some(poll) = cb.poll {
         unsafe { poll() };
     }
+    let devices = core().port_devices;
+    let enabled = input::enabled_ports(env, &devices);
     let buttons = std::array::from_fn(|seat| match cb.input {
-        Some(input) if seat < cap && !disconnected[seat] => input::read(input, seat as u32),
+        Some(input) if enabled[seat] => input::read(input, seat as u32),
         _ => 0,
     });
     let framebuffer = cb.framebuffer.map(|get| unsafe { get() } as u32);
     let mut audio = [0i16; AUDIO_FRAMES * 2];
-    let (resolution, rendered, quit) = {
+    let (width, height) = (geometry.base_width, geometry.base_height);
+    let (rendered, quit) = {
         let mut state = core();
         let Core {
             game,
@@ -385,11 +376,12 @@ pub extern "C" fn retro_run() {
         let Some(game) = game else {
             return;
         };
+        game.geometry = geometry;
+        game.app.set_enabled_seats(enabled);
         game.advance(buttons, &mut audio);
-        let size = game.config.resolution;
         let mut rendered = false;
         if let (Some(renderer), Some(fbo)) = (renderer, framebuffer) {
-            renderer.canvas.begin(size.width, size.height);
+            renderer.canvas.begin(width, height);
             game.ui.draw(
                 &mut renderer.canvas,
                 &game.app,
@@ -397,10 +389,10 @@ pub extern "C" fn retro_run() {
                 game.frame as f32 / FPS as f32,
             );
             renderer.bind_framebuffer(fbo);
-            renderer.present(size.width, size.height);
+            renderer.present(width, height);
             rendered = true;
         }
-        (size, rendered, *graphics_failed || game.app.quit)
+        (rendered, *graphics_failed || game.app.quit)
     };
     unsafe {
         if let Some(video) = cb.video {
@@ -409,7 +401,7 @@ pub extern "C" fn retro_run() {
             } else {
                 ptr::null()
             };
-            video(frame, resolution.width, resolution.height, 0);
+            video(frame, width, height, 0);
         }
         if let Some(batch) = cb.audio_batch {
             batch(audio.as_ptr(), AUDIO_FRAMES);

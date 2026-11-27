@@ -90,7 +90,7 @@ jobs:
           grep 'OpenGL: .*OpenGL ES 2\.0' render.log
           "$COMPILER-gcc" -std=c11 -Wall -Wextra -Werror "$GITHUB_WORKSPACE/libretro/tests/smoke.c" \
             ./superdrmeerkat_libretro.so -lEGL -lGLESv2 -o core-smoke
-          "$EMULATOR" -cpu "$QEMU_CPU" ./core-smoke smoke.toml
+          "$EMULATOR" -cpu "$QEMU_CPU" ./core-smoke
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: super-dr-meerkat-${{ env.PLATFORM }}
@@ -197,16 +197,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Start the core with and without a cabinet config
+      - name: Start the core without content at automatic and fixed resolutions
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends retroarch xvfb xauth libgl1-mesa-dri
           cargo build --locked --release -p superdrmeerkat-libretro
           core="$PWD/target/release/libsuperdrmeerkat_libretro.so"
           cd "$RUNNER_TEMP"
-          mkdir bios
-          echo 'resolution = "640x360"' > bios/super-dr-meerkat.toml
-          echo 'resolution = "800x600"' > cabinet.toml
           cat > retroarch.cfg <<EOF
           video_driver = "gl"
           video_fullscreen = "false"
@@ -215,22 +212,23 @@ jobs:
           audio_driver = "alsa"
           audio_device = "null"
           config_save_on_exit = "false"
-          system_directory = "$PWD/bios"
+          global_core_options = "true"
+          core_options_path = "$PWD/core-options.cfg"
           EOF
-          for size in 640x360 800x600; do
-            content=()
-            if [[ "$size" == 800x600 ]]; then content=("$PWD/cabinet.toml"); fi
-            xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 retroarch -v -c "$PWD/retroarch.cfg" \
-              -L "$core" --max-frames 30 --max-frames-ss --max-frames-ss-path "$PWD/$size.png" \
-              "${content[@]}" > "$size.log" 2>&1 || { cat "$size.log"; exit 1; }
-            grep '^OpenGL:' "$size.log"
-            python3 - "$size" <<'PY'
+          for option in Auto 1280x720; do
+            printf 'superdrmeerkat_resolution = "%s"\n' "$option" > core-options.cfg
+            xvfb-run -a -s '-screen 0 1920x1080x24' env LIBGL_ALWAYS_SOFTWARE=1 retroarch -v -c "$PWD/retroarch.cfg" \
+              -L "$core" --max-frames 30 --max-frames-ss --max-frames-ss-path "$PWD/$option.png" \
+              > "$option.log" 2>&1 || { cat "$option.log"; exit 1; }
+            grep '^OpenGL:' "$option.log"
+            python3 - "$option" <<'PY'
           import struct
           import sys
           from pathlib import Path
-          size = sys.argv[1]
-          width, height = struct.unpack(">II", Path(f"{size}.png").read_bytes()[16:24])
-          assert f"{width}x{height}" == size, (width, height)
+          option = sys.argv[1]
+          expected = "1920x1080" if option == "Auto" else option
+          width, height = struct.unpack(">II", Path(f"{option}.png").read_bytes()[16:24])
+          assert f"{width}x{height}" == expected, (width, height)
           PY
           done
 

@@ -50,7 +50,7 @@ fn settings() -> Result<Option<Config>, String> {
 
 fn open_window(
     video: &VideoSubsystem,
-    resolution: Resolution,
+    resolution: Option<Resolution>,
 ) -> Result<(Window, GLContext), String> {
     let attributes = video.gl_attr();
     // Windows graphics drivers expose desktop OpenGL through SDL's WGL backend.
@@ -72,12 +72,22 @@ fn open_window(
     attributes.set_blue_size(8);
     attributes.set_depth_size(0);
     attributes.set_stencil_size(0);
-    let (w, h) = video
+    let desktop = video
         .display_usable_bounds(0)
-        .map(|b| resolution.fit_within(b.width(), b.height()))
-        .unwrap_or((resolution.width, resolution.height));
+        .or_else(|_| video.display_bounds(0))
+        .map(|b| Resolution {
+            width: b.width(),
+            height: b.height(),
+        })
+        .unwrap_or_else(|_| resolution.unwrap_or(Resolution::FULL_HD));
+    let (w, h) = resolution
+        .unwrap_or(desktop)
+        .fit_within(desktop.width, desktop.height);
     let mut builder = video.window("Super Dr Meerkat", w, h);
     builder.opengl().resizable().position_centered();
+    if resolution.is_none() {
+        builder.maximized().allow_highdpi();
+    }
     // Retry with a regular framebuffer when the display lacks MSAA.
     let create = |samples| -> Result<(Window, GLContext), String> {
         attributes.set_multisample_buffers(u8::from(samples > 0));
@@ -94,7 +104,10 @@ fn open_window(
     create(4).or_else(|_| create(0))
 }
 
-fn enter_fullscreen(window: &mut Window, resolution: Resolution) -> Result<(), String> {
+fn enter_fullscreen(window: &mut Window, resolution: Option<Resolution>) -> Result<(), String> {
+    let Some(resolution) = resolution else {
+        return window.set_fullscreen(FullscreenType::Desktop);
+    };
     let mode = DisplayMode::new(
         PixelFormatEnum::Unknown,
         resolution.width as i32,
@@ -143,7 +156,7 @@ fn run() -> Result<(), String> {
         .map_err(|e| eprintln!("Audio unavailable: {e}"))
         .ok();
     let mut app = App::new(&config, audio.is_some(), scores::HighScores::cabinet());
-    let mut pads = Pads::new(sdl.game_controller()?, app.cap);
+    let mut pads = Pads::new(sdl.game_controller()?, config.max_players);
     let mut ui = Ui::default();
     let mut events = sdl.event_pump()?;
     let mut pointer = None;

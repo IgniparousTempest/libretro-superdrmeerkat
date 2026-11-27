@@ -62,7 +62,7 @@ pub fn key_press(app: &mut App, key: Key) {
             NameKey::Select,
             NameKey::Select,
         ];
-        for (i, keys) in KEYS.iter().enumerate().take(app.cap) {
+        for (i, keys) in KEYS.iter().enumerate() {
             let action = if key == UP[i] {
                 Some(NameKey::Up)
             } else {

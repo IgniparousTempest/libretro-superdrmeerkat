@@ -86,7 +86,10 @@ impl Ui {
             c.fill(rect(0.0, 0.0, c.w, c.h), DEEP.alpha(214));
             let room = body.inset(10.0);
             let (w, h) = match app.screen {
-                Screen::Ready => ((seat_row_width(app.cap) + 64.0).max(440.0), 224.0),
+                Screen::Ready => (
+                    (seat_row_width(app.enabled_seats().count()) + 64.0).max(440.0),
+                    224.0,
+                ),
                 Screen::Result(Outcome::Draw) => (540.0, 190.0),
                 _ if app.options().len() > 1 => (540.0, 320.0),
                 _ => (540.0, 222.0),
@@ -144,12 +147,18 @@ impl Ui {
                 c.tile(right, rect(x + 26.0, 34.0, 26.0, 26.0), 2, WHITE);
             }
             if app.screen == Screen::Title {
-                let (prompt, command) = match app.credits[..app.cap].iter().position(|&n| n > 0) {
-                    Some(seat) => ("Press start to begin", Command::Start(seat)),
-                    None => ("Insert credits", Command::Coin(0)),
-                };
+                let (prompt, command) =
+                    if let Some(seat) = app.enabled_seats().find(|&s| app.credits[s] > 0) {
+                        ("Press start to begin", Some(Command::Start(seat)))
+                    } else if let Some(seat) = app.enabled_seats().next() {
+                        ("Insert credits", Some(Command::Coin(seat)))
+                    } else {
+                        ("Enable a controller port", None)
+                    };
                 let width = c.text_width(DISPLAY, 46.0, prompt) + 24.0;
-                let hover = self.hit(c, rect((500.0 - width) * 0.5, 101.0, width, 65.0), command);
+                let hover = command.is_some_and(|cmd| {
+                    self.hit(c, rect((500.0 - width) * 0.5, 101.0, width, 65.0), cmd)
+                });
                 c.center_text(
                     DISPLAY,
                     46.0,
@@ -177,9 +186,10 @@ impl Ui {
             PAPER,
         );
 
-        let first = (width - seat_row_width(app.cap)) * 0.5;
-        for (seat, &accent) in SEATS.iter().take(app.cap).enumerate() {
-            let left = first + seat as f32 * (CARD_WIDTH + CARD_GAP);
+        let first = (width - seat_row_width(app.enabled_seats().count())) * 0.5;
+        for (i, seat) in app.enabled_seats().enumerate() {
+            let accent = SEATS[seat];
+            let left = first + i as f32 * (CARD_WIDTH + CARD_GAP);
             let joined = app.seats.contains(&seat);
             let credits = app.credits[seat];
             let frame = rect(left, 115.0, CARD_WIDTH, 82.0);
@@ -331,7 +341,7 @@ fn seconds_left(time: std::time::Duration) -> u64 {
 }
 
 fn seat_row_width(count: usize) -> f32 {
-    count as f32 * (CARD_WIDTH + CARD_GAP) - CARD_GAP
+    count as f32 * CARD_WIDTH + count.saturating_sub(1) as f32 * CARD_GAP
 }
 
 fn score_screen(c: &mut Canvas, body: Rect, app: &App) {
@@ -424,46 +434,52 @@ fn control_strip(c: &mut Canvas, area: Rect, items: &[(&str, &str)], ink: Ink) {
 
 impl Ui {
     fn credits(&mut self, c: &mut Canvas, area: Rect, app: &App) {
-        let amounts: Vec<_> = app.credits[..app.cap].iter().map(u32::to_string).collect();
+        let amounts: Vec<_> = app
+            .enabled_seats()
+            .map(|seat| (seat, app.credits[seat].to_string()))
+            .collect();
+        if amounts.is_empty() {
+            return;
+        }
         let advance = |c: &Canvas, amount: &str| 45.0 + c.text_width(DISPLAY, 22.0, amount);
-        let width = 67.0 + amounts.iter().map(|n| advance(c, n)).sum::<f32>() - 20.0;
+        let width = 67.0 + amounts.iter().map(|(_, n)| advance(c, n)).sum::<f32>() - 20.0;
         let mut fitted = area.fit(width, 32.0);
         fitted.x = area.x;
         c.within(fitted, width, 32.0, |c| {
             c.text(DISPLAY, 18.0, 0.0, 22.0, "CREDITS", SOFT);
             let mut x = 67.0;
             let interactive = matches!(app.screen, Screen::Title | Screen::Ready);
-            for (i, amount) in amounts.iter().enumerate() {
-                let seat_hover =
-                    interactive && self.hit(c, rect(x - 6.0, 0.0, 29.0, 32.0), Command::Start(i));
+            for (seat, amount) in amounts {
+                let seat_hover = interactive
+                    && self.hit(c, rect(x - 6.0, 0.0, 29.0, 32.0), Command::Start(seat));
                 let coin_hover = interactive
                     && self.hit(
                         c,
                         rect(
                             x + 23.0,
                             0.0,
-                            c.text_width(DISPLAY, 22.0, amount) + 9.0,
+                            c.text_width(DISPLAY, 22.0, &amount) + 9.0,
                             32.0,
                         ),
-                        Command::Coin(i),
+                        Command::Coin(seat),
                     );
                 c.text(
                     DISPLAY,
                     17.0,
                     x,
                     22.0,
-                    &format!("P{}", i + 1),
-                    if seat_hover { PAPER } else { SEATS[i] },
+                    &format!("P{}", seat + 1),
+                    if seat_hover { PAPER } else { SEATS[seat] },
                 );
                 c.text(
                     DISPLAY,
                     22.0,
                     x + 25.0,
                     23.0,
-                    amount,
+                    &amount,
                     if coin_hover { GOLD } else { PAPER },
                 );
-                x += advance(c, amount);
+                x += advance(c, &amount);
             }
         });
     }

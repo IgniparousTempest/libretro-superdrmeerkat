@@ -51,7 +51,7 @@ pub enum Nav {
 
 pub struct App {
     pub screen: Screen,
-    pub cap: usize,
+    enabled: [bool; MAX_PLAYERS],
     pub credits: [u32; MAX_PLAYERS],
     /// Physical cabinet seats in bottle order. A solo game can belong to any seat.
     pub seats: Vec<usize>,
@@ -80,7 +80,7 @@ impl App {
     pub fn new(config: &Config, has_audio: bool, scores: HighScores) -> Self {
         let mut app = Self {
             screen: Screen::Title,
-            cap: config.max_players,
+            enabled: std::array::from_fn(|seat| seat < config.max_players),
             credits: [0; MAX_PLAYERS],
             seats: Vec::new(),
             ready_flash_left: [Duration::ZERO; MAX_PLAYERS],
@@ -98,6 +98,17 @@ impl App {
         };
         app.switch(Screen::Title);
         app
+    }
+
+    pub fn enabled_seats(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..MAX_PLAYERS).filter(|&seat| self.enabled[seat])
+    }
+
+    pub fn set_enabled_seats(&mut self, enabled: [bool; MAX_PLAYERS]) {
+        if self.seats.iter().any(|&s| self.enabled[s] && !enabled[s]) {
+            self.command(Command::Pause);
+        }
+        self.enabled = enabled;
     }
 
     fn switch(&mut self, screen: Screen) {
@@ -176,7 +187,11 @@ impl App {
 
     fn start_round(&mut self) {
         self.round = Some(Round::new(self.seats.len(), seed(), 1, 0));
-        self.switch(Screen::Play);
+        self.switch(if self.seats.iter().all(|&s| self.enabled[s]) {
+            Screen::Play
+        } else {
+            Screen::Pause
+        });
         self.sounds.push(Sound::Start);
     }
 
@@ -241,12 +256,14 @@ impl App {
 
     pub fn command(&mut self, cmd: Command) {
         match cmd {
-            Command::Coin(s) if s < self.cap => {
+            Command::Coin(s) if self.enabled.get(s) == Some(&true) => {
                 self.credits[s] = self.credits[s].saturating_add(1);
                 self.sounds.push(Sound::Select);
             }
-            Command::Start(s) if s < self.cap => self.start_button(s),
-            Command::Name(s, key) if s < self.cap && self.screen == Screen::Names => {
+            Command::Start(s) if self.enabled.get(s) == Some(&true) => self.start_button(s),
+            Command::Name(s, key)
+                if self.enabled.get(s) == Some(&true) && self.screen == Screen::Names =>
+            {
                 self.name_key(s, key)
             }
             Command::Finish if matches!(self.screen, Screen::Result(_)) => self.finish_round(),
@@ -323,7 +340,7 @@ impl App {
             }
         }
         if self.screen == Screen::Names {
-            for seat in 0..self.cap {
+            for seat in 0..self.names.len() {
                 if let Some(p) = self.names[seat].as_mut().filter(|p| !p.done) {
                     p.time_left = p.time_left.saturating_sub(elapsed);
                     if p.time_left.is_zero() {

@@ -11,14 +11,20 @@ pub type Framebuffer = unsafe extern "C" fn() -> usize;
 pub type ProcAddress = unsafe extern "C" fn(*const c_char) -> Option<unsafe extern "C" fn()>;
 
 pub const SHUTDOWN: c_uint = 7;
-pub const GET_SYSTEM_DIRECTORY: c_uint = 9;
 pub const SET_PIXEL_FORMAT: c_uint = 10;
 pub const SET_INPUT_DESCRIPTORS: c_uint = 11;
 pub const SET_HW_RENDER: c_uint = 14;
+pub const GET_VARIABLE: c_uint = 15;
+pub const SET_VARIABLES: c_uint = 16;
+pub const GET_VARIABLE_UPDATE: c_uint = 17;
 pub const SET_SUPPORT_NO_GAME: c_uint = 18;
 pub const GET_SAVE_DIRECTORY: c_uint = 31;
+pub const SET_SYSTEM_AV_INFO: c_uint = 32;
 pub const SET_CONTROLLER_INFO: c_uint = 35;
+pub const SET_GEOMETRY: c_uint = 37;
 pub const GET_PREFERRED_HW_RENDER: c_uint = 56;
+pub const GET_INPUT_MAX_USERS: c_uint = 61;
+pub const GET_DISPLAY_METADATA: c_uint = 102 | 0x10000;
 
 pub const OPENGL: c_uint = 1;
 pub const GLES2: c_uint = 2;
@@ -61,12 +67,33 @@ pub struct GameInfo {
 }
 
 #[repr(C)]
+pub struct Variable {
+    pub key: *const c_char,
+    pub value: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Geometry {
     pub base_width: c_uint,
     pub base_height: c_uint,
     pub max_width: c_uint,
     pub max_height: c_uint,
     pub aspect_ratio: f32,
+}
+
+// retro_display_metadata v1. The HDR and colour capability blocks are opaque here.
+#[repr(C)]
+#[derive(Default)]
+pub struct DisplayMetadata {
+    pub version: c_uint,
+    pub size: c_uint,
+    pub native_width: c_uint,
+    pub native_height: c_uint,
+    pub size_mm: [c_uint; 2],
+    pub refresh_range_mhz: [c_uint; 2],
+    pub hdr: [u32; 22],
+    pub color_caps: [u32; 10],
 }
 
 #[repr(C)]
