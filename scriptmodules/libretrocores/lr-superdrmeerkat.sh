@@ -22,33 +22,14 @@ function _has_rust_lr-superdrmeerkat() {
 }
 
 function depends_lr-superdrmeerkat() {
-    [[ "$md_mode" == "remove" ]] || aptUpdate
-    getDepends build-essential || return 1
-    if [[ "$md_mode" == "remove" ]] || _has_rust_lr-superdrmeerkat; then
-        return 0
-    fi
-
-    local PATH="/usr/bin:$PATH"
+    [[ "$md_mode" == "remove" ]] && return 0
+    aptUpdate
     _has_rust_lr-superdrmeerkat && return 0
 
-    local pkg version best=1.85 compiler=""
-    # Debian also packages newer Rust releases as rustc-web and cargo-web.
-    for pkg in rustc-web rustc; do
-        version=$(LC_ALL=C apt-cache policy "$pkg" | awk '$1 == "Candidate:" {print $2}')
-        version=${version#*:}
-        if [[ "$version" == [0-9]* ]] && compareVersions "$version" ge "$best"; then
-            compiler="$pkg"
-            best="$version"
-        fi
-    done
-    if [[ -n "$compiler" ]] &&
-        aptInstall --no-install-recommends "$compiler" "cargo${compiler#rustc}" &&
-        _has_rust_lr-superdrmeerkat; then
-        return 0
+    if ! aptInstall --no-install-recommends rustc cargo || ! _has_rust_lr-superdrmeerkat; then
+        md_ret_errors+=("Super Dr Meerkat requires rustc and cargo 1.85 or newer on PATH.")
+        return 1
     fi
-
-    md_ret_errors+=("APT could not install Rust and Cargo 1.85 or newer from the configured repositories.")
-    return 1
 }
 
 function sources_lr-superdrmeerkat() {
@@ -58,15 +39,6 @@ function sources_lr-superdrmeerkat() {
 function build_lr-superdrmeerkat() {
     md_ret_require="$md_build/superdrmeerkat_libretro.so"
     rm -f "$md_ret_require"
-
-    if ! _has_rust_lr-superdrmeerkat; then
-        local PATH="/usr/bin:$PATH"
-        if ! _has_rust_lr-superdrmeerkat; then
-            md_ret_errors+=("Building Super Dr Meerkat requires Rust and Cargo 1.85 or newer. Run the depends action first.")
-            return 1
-        fi
-    fi
-
     cargo build --release --locked --jobs "$__jobs" --target-dir target -p superdrmeerkat-libretro || return 1
     cp target/release/libsuperdrmeerkat_libretro.so "$md_ret_require"
 }
